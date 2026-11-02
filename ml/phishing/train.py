@@ -79,8 +79,13 @@ def main():
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
+    # max_leaf_nodes is the key size lever: it hard-caps nodes per tree
+    # regardless of how many training rows there are, so the saved bundle
+    # (model + SHAP's shadow copy of every tree) stays small and portable
+    # (a few MB) instead of ballooning into hundreds of MB on this ~340k-row
+    # training set, which is what an unbounded max_depth did before.
     model = RandomForestClassifier(
-        n_estimators=200, max_depth=18, min_samples_leaf=3,
+        n_estimators=150, max_depth=18, max_leaf_nodes=1000, min_samples_leaf=3,
         class_weight="balanced", n_jobs=-1, random_state=42,
     )
     model.fit(X_train, y_train)

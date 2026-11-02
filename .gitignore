@@ -5,14 +5,14 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Data & models (large files — not committed, documented in README instead)
+# Raw training datasets: large, re-downloadable, not needed to run the app
+# (only to retrain). The trained *.joblib bundles themselves ARE committed
+# (see models/ below) so a fresh clone deploys without any training step.
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 models/*.pkl
-models/*.joblib
-models/*.json
 
 # Reports (generated)
 reports/*.pdf

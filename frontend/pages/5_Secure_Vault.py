@@ -2,9 +2,11 @@
 import streamlit as st
 import requests
 
+from _backend_bootstrap import ensure_backend
 from api_client import require_login, BACKEND_URL, _headers
 
 st.set_page_config(page_title="Secure Vault — SentinelAI", page_icon="🔐", layout="wide")
+ensure_backend()
 require_login()
 
 st.title("🔐 Secure Vault")

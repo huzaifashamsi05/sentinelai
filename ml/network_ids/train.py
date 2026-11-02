@@ -88,8 +88,11 @@ def main():
     y_train = label_encoder.transform(y_train_raw)
     y_test = label_encoder.transform(y_test_raw)
 
+    # max_leaf_nodes caps nodes per tree so the saved bundle (model + SHAP's
+    # shadow copy of every tree) stays small (a few MB) and deployable,
+    # regardless of training-set size.
     model = RandomForestClassifier(
-        n_estimators=200, max_depth=20, min_samples_leaf=2,
+        n_estimators=150, max_depth=20, max_leaf_nodes=300, min_samples_leaf=2,
         class_weight="balanced", n_jobs=-1, random_state=42,
     )
     model.fit(X_train, y_train)

@@ -3,9 +3,11 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, require_login
 
 st.set_page_config(page_title="Phishing Detector — SentinelAI", page_icon="🎣", layout="wide")
+ensure_backend()
 require_login()
 
 st.title("🎣 Phishing & Malicious URL Detector")

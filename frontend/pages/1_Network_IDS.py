@@ -7,9 +7,11 @@ import plotly.express as px
 import streamlit as st
 import pandas as pd
 
+from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, require_login
 
 st.set_page_config(page_title="Network IDS — SentinelAI", page_icon="🌐", layout="wide")
+ensure_backend()
 require_login()
 
 st.title("🌐 Network Intrusion Detection")

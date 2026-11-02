@@ -6,9 +6,11 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, is_admin, is_logged_in, login, logout, register
 
 st.set_page_config(page_title="SentinelAI", page_icon="🛡️", layout="wide")
+ensure_backend()
 
 SEVERITY_COLOR = {"High": "#D64545", "Medium": "#E0A030", "Low": "#4A90D9"}
 
