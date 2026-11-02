@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.db.database import Base, engine
-from app.api import auth, alerts
+from app.api import auth, alerts, reports
 from app.modules.network_ids import router as network_ids_router
 from app.modules.phishing import router as phishing_router
 from app.modules.malware import router as malware_router
@@ -35,6 +35,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(alerts.router, prefix=settings.API_V1_PREFIX)
+app.include_router(reports.router, prefix=settings.API_V1_PREFIX)
 app.include_router(network_ids_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(phishing_router.router, prefix=settings.API_V1_PREFIX)
 app.include_router(malware_router.router, prefix=settings.API_V1_PREFIX)
