@@ -8,6 +8,13 @@ audit log of login events.
 """
 from datetime import datetime, timedelta, timezone
 
+
+def utcnow() -> datetime:
+    """SQLite drops tzinfo on round-trip, so a timestamp read back from the
+    DB is naive while datetime.now(timezone.utc) is aware — comparing them
+    raises TypeError. Keep every stored/compared timestamp naive UTC."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -49,8 +56,8 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
 
-    if user and user.locked_until and user.locked_until > datetime.now(timezone.utc):
-        remaining = int((user.locked_until - datetime.now(timezone.utc)).total_seconds())
+    if user and user.locked_until and user.locked_until > utcnow():
+        remaining = int((user.locked_until - utcnow()).total_seconds())
         _log(db, form_data.username, "login_blocked_locked", f"{remaining}s remaining")
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
@@ -61,7 +68,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         if user:
             user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
             if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
-                user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
+                user.locked_until = utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
                 _log(db, form_data.username, "account_locked", f"after {user.failed_login_attempts} failed attempts")
             db.commit()
         _log(db, form_data.username, "login_failed")

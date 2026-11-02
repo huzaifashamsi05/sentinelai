@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.db.database import Base, engine
 from app.api import auth, alerts, reports
 from app.modules.network_ids import router as network_ids_router
@@ -32,6 +33,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(alerts.router, prefix=settings.API_V1_PREFIX)

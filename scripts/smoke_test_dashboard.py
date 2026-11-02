@@ -21,8 +21,8 @@ def main():
 
         print("Logging in...")
         # Streamlit text inputs: find by label text
-        page.get_by_label("Username", exact=True).first.fill("admin")
-        page.get_by_label("Password", exact=False).first.fill("SentinelAI123")
+        page.get_by_label("Username", exact=True).first.fill("analyst1")
+        page.get_by_label("Password", exact=False).first.fill("AnalystPass123")
         page.get_by_role("button", name="Log in").click()
         page.wait_for_timeout(3000)
         page.screenshot(path="/tmp/screenshot_2_overview.png")

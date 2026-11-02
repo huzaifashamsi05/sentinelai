@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
+from app.core import security_headers
 from app.db.database import get_db
 from app.db.models import AuthorizedScanTarget, ModuleName
 from app.modules.vuln_scanner.scan_rules import run_all_checks
@@ -32,6 +33,10 @@ class AddTargetRequest(BaseModel):
 
 class ScanRequest(BaseModel):
     url: str = Field(description="Full URL including scheme, e.g. http://localhost:3000")
+
+
+class SecurityHeadersToggle(BaseModel):
+    enabled: bool
 
 
 def _is_authorized(db: Session, host: str) -> bool:
@@ -68,6 +73,22 @@ def add_target(payload: AddTargetRequest, db: Session = Depends(get_db), user=De
     db.add(target)
     db.commit()
     return {"message": "target authorized", "host": payload.host}
+
+
+@router.get("/security-headers")
+def get_security_headers_state(_user=Depends(get_current_user)):
+    """Lets the dashboard show whether the backend's own security headers
+    are currently on — used for the module's live before/after demo."""
+    return {"enabled": security_headers.HEADERS_ENABLED}
+
+
+@router.post("/security-headers")
+def set_security_headers_state(payload: SecurityHeadersToggle, _user=Depends(require_admin)):
+    """Admin-only: turn the backend's own security-headers middleware on/off,
+    to reproduce the 'before' state and then demonstrate the fix live —
+    always against our own server (localhost), never a third-party site."""
+    security_headers.HEADERS_ENABLED = payload.enabled
+    return {"enabled": security_headers.HEADERS_ENABLED}
 
 
 @router.post("/scan")
