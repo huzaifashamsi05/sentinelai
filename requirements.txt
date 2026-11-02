@@ -32,3 +32,4 @@ plotly==5.24.1
 
 # --- Utility ---
 python-dotenv==1.0.1
+pefile==2024.8.26
