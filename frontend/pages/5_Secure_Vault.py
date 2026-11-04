@@ -279,62 +279,74 @@ with tab_verify:
         if resp.status_code == 200:
             result = resp.json()
             if result["signature_valid"]:
-                st.success("✅ Signature is VALID — file is authentic and unmodified.")
                 _ledger_log("Signature VALID", file.name, "", "✅")
+                # Stored rather than rendered inline: a st.download_button click
+                # below triggers its own rerun, on which "✅ Verify" is no longer
+                # True — if the certificate lived inside this if-block it would
+                # vanish the instant Download is clicked. Storing it and always
+                # re-rendering from session_state keeps it on screen across that
+                # rerun, same fix as the Vulnerability Scanner's scan report.
+                st.session_state["vault_cert"] = {
+                    "file_name": file.name,
+                    "file_sha256": hashlib.sha256(file.getvalue()).hexdigest(),
+                    "key_fp": _spki_fingerprint(pub_key),
+                    "verified_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            else:
+                st.session_state["vault_cert"] = None
+                st.error("🚨 Signature is INVALID — file may have been tampered with, or wrong key.")
+                _ledger_log("Signature INVALID", file.name, "", "🚨")
+        else:
+            st.session_state["vault_cert"] = None
+            st.error(resp.json().get("detail", resp.text))
+            _ledger_log("Verify Failed", file.name, "", "🚨")
 
-                file_sha256 = hashlib.sha256(file.getvalue()).hexdigest()
-                key_fp = _spki_fingerprint(pub_key)
-                verified_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                st.divider()
-                st.markdown(
-                    f"""<div style="border:1px solid #2ecc71;border-radius:10px;padding:18px 22px;background:linear-gradient(135deg,#0e2518,#12161c);">
+    if st.session_state.get("vault_cert"):
+        cert = st.session_state["vault_cert"]
+        st.success("✅ Signature is VALID — file is authentic and unmodified.")
+        st.divider()
+        st.markdown(
+            f"""<div style="border:1px solid #2ecc71;border-radius:10px;padding:18px 22px;background:linear-gradient(135deg,#0e2518,#12161c);">
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
 <span style="font-size:1.5rem;">🛡️</span>
 <span style="font-size:1.08rem;font-weight:700;color:#2ecc71;">Trust Certificate — Signature Verified</span>
 </div>
 <table style="width:100%;font-size:0.86rem;color:#d7dadd;border-collapse:collapse;">
-<tr><td style="padding:4px 0;color:#9aa0a6;width:180px;vertical-align:top;">File</td><td>{file.name}</td></tr>
-<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">File SHA-256</td><td style="font-family:monospace;word-break:break-all;">{file_sha256}</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;width:180px;vertical-align:top;">File</td><td>{cert['file_name']}</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">File SHA-256</td><td style="font-family:monospace;word-break:break-all;">{cert['file_sha256']}</td></tr>
 <tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Signature algorithm</td><td>RSA-2048 + PSS + SHA-256</td></tr>
-<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Key fingerprint (SPKI SHA-256)</td><td style="font-family:monospace;word-break:break-all;">{key_fp}</td></tr>
-<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Verified at</td><td>{verified_at}</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Key fingerprint (SPKI SHA-256)</td><td style="font-family:monospace;word-break:break-all;">{cert['key_fp']}</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Verified at</td><td>{cert['verified_at']}</td></tr>
 </table>
 </div>""",
-                    unsafe_allow_html=True,
-                )
-                st.caption(
-                    "A valid signature proves the file exactly matches what this key holder signed — it does not "
-                    "by itself prove who the key holder is. Only trust a public key you received directly from the signer."
-                )
-                cert_text = (
-                    "SENTINELAI SECURE VAULT — DIGITAL SIGNATURE TRUST CERTIFICATE\n"
-                    "================================================================\n"
-                    f"File:                 {file.name}\n"
-                    f"File SHA-256:         {file_sha256}\n"
-                    "Signature algorithm:  RSA-2048 + PSS + SHA-256\n"
-                    f"Key fingerprint:      {key_fp}\n"
-                    "                      (SHA-256 of the DER-encoded SubjectPublicKeyInfo)\n"
-                    f"Verified at:          {verified_at}\n"
-                    "Result:               VALID — signature matches file and public key\n"
-                    "\n"
-                    "Note: this certificate proves the signature is mathematically valid for\n"
-                    "this exact file and the public key supplied at verification time. It does\n"
-                    "NOT independently prove the real-world identity behind that key — only\n"
-                    "trust a public key you received directly from the signer.\n"
-                )
-                st.download_button(
-                    "⬇️ Download Trust Certificate (.txt)",
-                    data=cert_text,
-                    file_name=f"trust_certificate_{file.name}.txt",
-                    mime="text/plain",
-                )
-            else:
-                st.error("🚨 Signature is INVALID — file may have been tampered with, or wrong key.")
-                _ledger_log("Signature INVALID", file.name, "", "🚨")
-        else:
-            st.error(resp.json().get("detail", resp.text))
-            _ledger_log("Verify Failed", file.name, "", "🚨")
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "A valid signature proves the file exactly matches what this key holder signed — it does not "
+            "by itself prove who the key holder is. Only trust a public key you received directly from the signer."
+        )
+        cert_text = (
+            "SENTINELAI SECURE VAULT — DIGITAL SIGNATURE TRUST CERTIFICATE\n"
+            "================================================================\n"
+            f"File:                 {cert['file_name']}\n"
+            f"File SHA-256:         {cert['file_sha256']}\n"
+            "Signature algorithm:  RSA-2048 + PSS + SHA-256\n"
+            f"Key fingerprint:      {cert['key_fp']}\n"
+            "                      (SHA-256 of the DER-encoded SubjectPublicKeyInfo)\n"
+            f"Verified at:          {cert['verified_at']}\n"
+            "Result:               VALID — signature matches file and public key\n"
+            "\n"
+            "Note: this certificate proves the signature is mathematically valid for\n"
+            "this exact file and the public key supplied at verification time. It does\n"
+            "NOT independently prove the real-world identity behind that key — only\n"
+            "trust a public key you received directly from the signer.\n"
+        )
+        st.download_button(
+            "⬇️ Download Trust Certificate (.txt)",
+            data=cert_text,
+            file_name=f"trust_certificate_{cert['file_name']}.txt",
+            mime="text/plain",
+        )
 
 st.divider()
 with st.expander(
