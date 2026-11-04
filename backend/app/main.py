@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.security import hash_password
 from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.request_monitor import RequestMonitorMiddleware
 from app.db.database import Base, SessionLocal, engine
 from app.db.models import User, UserRole
 from app.api import auth, alerts, reports
@@ -63,6 +64,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestMonitorMiddleware)
 
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(alerts.router, prefix=settings.API_V1_PREFIX)

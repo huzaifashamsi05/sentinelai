@@ -3,12 +3,14 @@ Network Intrusion Detection page. Demonstrates the handbook-required
 before/after narrative: show "normal" traffic pass through clean, then a
 DoS-style attack flagged with an explanation.
 """
+from datetime import datetime
+
 import plotly.express as px
 import streamlit as st
 import pandas as pd
 
 from _backend_bootstrap import ensure_backend
-from api_client import api_get, api_post, require_login
+from api_client import api_get, api_post, is_admin, require_login
 
 st.set_page_config(page_title="Network IDS — SentinelAI", page_icon="🌐", layout="wide")
 ensure_backend()
@@ -16,6 +18,17 @@ require_login()
 
 st.title("🌐 Network Intrusion Detection")
 st.caption("Classifies a network connection as Normal, DoS, Probe, R2L or U2R, trained on the NSL-KDD benchmark.")
+
+
+def _render_shap_chart(explanation: list[dict], height: int = 260) -> None:
+    exp_df = pd.DataFrame(explanation)
+    exp_df["direction"] = exp_df["impact"].apply(lambda x: "Pushes toward attack" if x > 0 else "Pushes toward normal")
+    fig = px.bar(
+        exp_df.sort_values("impact"), x="impact", y="feature", orientation="h",
+        color="direction", color_discrete_map={"Pushes toward attack": "#D64545", "Pushes toward normal": "#4A90D9"},
+    )
+    fig.update_layout(height=height, yaxis_title="", xaxis_title="SHAP impact", margin=dict(t=10, b=10))
+    st.plotly_chart(fig, use_container_width=True)
 
 status = api_get("/network-ids/status").json()
 if not status.get("model_loaded"):
@@ -74,12 +87,122 @@ if submitted:
             st.success(f"✅ Traffic classified as **{result['label'].upper()}** — confidence {result['confidence']:.0%}")
 
         st.subheader("Why the model decided this (SHAP)")
-        exp_df = pd.DataFrame(result["explanation"])
-        exp_df["direction"] = exp_df["impact"].apply(lambda x: "Pushes toward attack" if x > 0 else "Pushes toward normal")
-        fig = px.bar(
-            exp_df.sort_values("impact"), x="impact", y="feature", orientation="h",
-            color="direction", color_discrete_map={"Pushes toward attack": "#D64545", "Pushes toward normal": "#4A90D9"},
-        )
-        fig.update_layout(height=300, yaxis_title="", xaxis_title="SHAP impact")
-        st.plotly_chart(fig, use_container_width=True)
+        _render_shap_chart(result["explanation"], height=300)
         st.caption("This event has been recorded in the unified Alert feed on the Home page.")
+
+st.divider()
+st.header("🔴 Live Request Monitor")
+st.caption("Classifies REAL HTTP requests reaching this backend, live — using the exact same trained model as the form above.")
+
+with st.expander("ℹ️ What \"live\" means here (read before trusting this)", expanded=False):
+    st.markdown("""
+- **This is HTTP-layer monitoring, not packet-layer.** A Python web app — and especially a Streamlit
+  Community Cloud container — has no access to a raw network interface, so it can never capture TCP/IP
+  packets the way NSL-KDD's original 1999 dataset was built (from `tcpdump` on a real network). What it
+  *can* see honestly is every HTTP request that actually reaches this backend — so that's exactly what
+  this watches. Nothing below is fabricated traffic.
+- **`protocol_type`/`service` are literally true** (every request here really is `tcp`/`http`), not guessed.
+  **`flag`** (the original dataset's raw TCP connection-state) is approximated from the HTTP status code,
+  since the web framework never exposes raw TCP flags to application code.
+- **`count`/`srv_count` and every rate derived from them reuse NSL-KDD's own definition** — a real rolling
+  count over the last 2 seconds of real logged requests — just computed from real HTTP events instead of
+  real packets. **`dst_host_*`** reuses NSL-KDD's other definition the same way, over the last 100 real
+  logged requests to this host.
+- Because the dashboard and backend share one container, every request shares the same loopback IP — so
+  `count` effectively measures *this app's overall request rate* rather than filtering per visitor. Doesn't
+  change the demonstration, just worth knowing.
+- The model itself was trained on simulated 1999 packet-level traffic, not HTTP semantics — so an HTTP
+  pattern that *looks* like an attack to a human (e.g. a login burst) won't always match its learned
+  decision boundary the way a textbook NSL-KDD attack would. That's an honest limitation of reusing a
+  packet-trained model on HTTP-layer signals, not a bug in this page.
+- Like the Vulnerability Scanner, this only ever watches traffic to **this app's own backend** — never
+  anything external.
+""")
+
+live_col1, live_col2, live_col3, live_col4 = st.columns([2, 1, 1, 1])
+with live_col1:
+    feed_limit = st.slider("Entries to show", 5, 50, 15, key="live_feed_limit")
+with live_col2:
+    refresh_clicked = st.button("🔄 Refresh Feed", use_container_width=True)
+with live_col3:
+    burst_clicked = st.button(
+        "💥 Generate Demo Burst", use_container_width=True, disabled=not is_admin(),
+        help="Fires a quick round of real requests at several of this backend's own endpoints — a "
+             "reconnaissance/probe-style pattern — so you can watch the live classification respond. "
+             "Admin only." if is_admin() else "Admin only.",
+    )
+with live_col4:
+    clear_clicked = st.button(
+        "🧹 Clear Feed", use_container_width=True, disabled=not is_admin(),
+        help="Admin only." if not is_admin() else "Wipes the in-memory feed below (does not touch the Alert feed history on the Home page).",
+    )
+
+_DEMO_BURST_ENDPOINTS = [
+    "/network-ids/sample-requests", "/phishing/status", "/phishing/sample-requests",
+    "/malware/status", "/alerts", "/alerts/stats",
+    "/vuln-scanner/targets", "/vuln-scanner/security-headers",
+]
+
+if clear_clicked and is_admin():
+    api_post("/network-ids/live-feed/clear")
+    st.toast("Live feed cleared.", icon="🧹")
+
+if burst_clicked and is_admin():
+    with st.spinner("Firing a quick burst across this backend's own endpoints..."):
+        for ep in _DEMO_BURST_ENDPOINTS:
+            try:
+                api_get(ep)
+            except Exception:
+                pass
+    st.toast("Burst sent — showing fresh classifications below.", icon="💥")
+
+feed_resp = api_get("/network-ids/live-feed", params={"limit": feed_limit})
+if feed_resp.status_code != 200:
+    st.error(f"Could not load the live feed: {feed_resp.text}")
+else:
+    feed = feed_resp.json()
+
+    status_col1, status_col2, status_col3 = st.columns([1, 1, 2])
+    with status_col1:
+        st.metric("Monitor status", "🟢 Live" if feed["monitor_enabled"] else "⏸️ Paused")
+    with status_col2:
+        st.metric("Requests logged", feed["total_logged"])
+    with status_col3:
+        if is_admin():
+            pause_label = "⏸️ Pause Monitor" if feed["monitor_enabled"] else "▶️ Resume Monitor"
+            if st.button(pause_label):
+                api_post("/network-ids/live-feed/toggle", json_body={"enabled": not feed["monitor_enabled"]})
+                st.rerun()
+
+    items = feed["items"]
+    if not items:
+        st.info("No requests logged yet — browse the app a little, or click **Generate Demo Burst** above, then **Refresh Feed**.")
+    else:
+        _LABEL_EMOJI = {"normal": "✅ normal", "dos": "🔴 DoS", "probe": "🟠 probe", "r2l": "🟣 R2L", "u2r": "⚫ U2R"}
+
+        rows = []
+        for item in items:
+            rows.append({
+                "Time": datetime.fromtimestamp(item["ts"]).strftime("%H:%M:%S"),
+                "Method": item["method"],
+                "Path": item["path"],
+                "Status": item["status_code"],
+                "Count (2s)": item["feature_row"]["count"] if item["feature_row"] else "—",
+                "Classification": _LABEL_EMOJI.get(item["label"], item["label"] or "…"),
+                "Confidence": f"{item['confidence']:.0%}" if item["confidence"] is not None else "—",
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+        flagged = [it for it in items if it["label"] and it["label"] != "normal"]
+        if flagged:
+            st.subheader(f"🔍 Flagged entries — why the model decided this ({len(flagged)})")
+            for item in flagged:
+                with st.expander(
+                    f"{_LABEL_EMOJI.get(item['label'], item['label'])} — {item['method']} {item['path']} "
+                    f"({item['status_code']}) at {datetime.fromtimestamp(item['ts']).strftime('%H:%M:%S')} "
+                    f"— confidence {item['confidence']:.0%}"
+                ):
+                    _render_shap_chart(item["explanation"], height=220)
+                    st.caption("Feature row computed for this request (pre-encoding):")
+                    st.json(item["feature_row"], expanded=False)
+        st.caption("Non-normal classifications above have been recorded in the unified Alert feed on the Home page.")

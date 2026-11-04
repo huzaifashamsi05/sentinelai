@@ -7,15 +7,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_admin
+from app.core import request_monitor
 from app.db.database import get_db
 from app.db.models import ModuleName
 from app.modules.ml_common import load_bundle, predict_with_explanation
+from app.modules.network_ids.live_monitor import classify_entry
 from app.services.alert_service import record_alert
 
 router = APIRouter(prefix="/network-ids", tags=["network-ids"])
 
 MODULE_KEY = "network_ids"
+
+
+class LiveMonitorToggle(BaseModel):
+    enabled: bool
 
 
 class ConnectionRecord(BaseModel):
@@ -138,3 +144,72 @@ def predict(record: ConnectionRecord, db: Session = Depends(get_db), user=Depend
         "explanation": result["explanation"],
         "alert_id": alert.id,
     }
+
+
+@router.get("/live-feed")
+def live_feed(limit: int = 20, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Real HTTP requests that have reached this backend, newest first,
+    each classified by the same model as the manual form above. See
+    live_monitor.py for exactly how an HTTP request becomes an NSL-KDD-style
+    feature row, and what's real vs. approximated in that translation.
+
+    Each entry is only ever run through the model ONCE — the result is
+    cached on the entry itself (request_monitor.RequestEntry.classification)
+    the first time it's served, so polling this endpoint repeatedly doesn't
+    repeatedly re-run inference on requests that already have a result."""
+    limit = max(1, min(limit, 100))
+    entries = request_monitor.all_entries()  # oldest-first
+    newest_first = list(reversed(entries))[:limit]
+
+    items = []
+    for entry in newest_first:
+        if entry.classification is None:
+            result = classify_entry(entry, entries)
+            entry.classification = result
+            if result is not None and result["label"] != "normal":
+                record_alert(
+                    db,
+                    module=ModuleName.network_ids,
+                    title=f"Live traffic from {entry.client_ip} classified as {result['label'].upper()}"
+                          f" ({entry.method} {entry.path} -> {entry.status_code})",
+                    is_malicious=True,
+                    confidence=result["confidence"],
+                    explanation=result["explanation"],
+                    detail="Flagged by the Live Request Monitor (HTTP-layer, not packet-layer).",
+                    source_ref=f"{entry.client_ip} {entry.method} {entry.path}",
+                )
+
+        c = entry.classification
+        items.append({
+            "id": entry.id,
+            "ts": entry.ts,
+            "client_ip": entry.client_ip,
+            "method": entry.method,
+            "path": entry.path,
+            "status_code": entry.status_code,
+            "duration_ms": round(entry.duration_ms, 1),
+            "src_bytes": entry.req_bytes,
+            "dst_bytes": entry.resp_bytes,
+            "label": c["label"] if c else None,
+            "confidence": c["confidence"] if c else None,
+            "feature_row": c["feature_row"] if c else None,
+            "explanation": c["explanation"] if c else None,
+        })
+
+    return {
+        "monitor_enabled": request_monitor.MONITOR_ENABLED,
+        "total_logged": len(entries),
+        "items": items,
+    }
+
+
+@router.post("/live-feed/toggle")
+def toggle_live_feed(payload: LiveMonitorToggle, _user=Depends(require_admin)):
+    request_monitor.set_enabled(payload.enabled)
+    return {"enabled": request_monitor.MONITOR_ENABLED}
+
+
+@router.post("/live-feed/clear")
+def clear_live_feed(_user=Depends(require_admin)):
+    request_monitor.clear()
+    return {"message": "cleared"}
