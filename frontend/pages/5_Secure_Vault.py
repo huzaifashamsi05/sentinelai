@@ -1,9 +1,15 @@
 """Secure Vault page: AES encryption, RSA signatures, SHA-256 integrity."""
+import hashlib
 import math
 from datetime import datetime
 
 import streamlit as st
 import requests
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    PublicFormat,
+    load_pem_public_key,
+)
 
 from _backend_bootstrap import ensure_backend
 from api_client import require_login, BACKEND_URL, _headers
@@ -30,6 +36,18 @@ def _ledger_log(action: str, filename: str, sha256: str = "", status: str = "✅
             "SHA-256": (sha256[:16] + "…") if sha256 else "—",
         },
     )
+
+
+def _spki_fingerprint(pub_pem: str) -> str:
+    """SHA-256 of the key's DER-encoded SubjectPublicKeyInfo — the standard,
+    formatting-independent way to fingerprint a public key (unlike hashing
+    the raw PEM text, which would change with whitespace/line endings)."""
+    try:
+        pub = load_pem_public_key(pub_pem.encode())
+        der = pub.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+        return hashlib.sha256(der).hexdigest()
+    except Exception:
+        return ""
 
 
 def _crack_time_estimate(pw: str):
@@ -263,6 +281,54 @@ with tab_verify:
             if result["signature_valid"]:
                 st.success("✅ Signature is VALID — file is authentic and unmodified.")
                 _ledger_log("Signature VALID", file.name, "", "✅")
+
+                file_sha256 = hashlib.sha256(file.getvalue()).hexdigest()
+                key_fp = _spki_fingerprint(pub_key)
+                verified_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                st.divider()
+                st.markdown(
+                    f"""<div style="border:1px solid #2ecc71;border-radius:10px;padding:18px 22px;background:linear-gradient(135deg,#0e2518,#12161c);">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+<span style="font-size:1.5rem;">🛡️</span>
+<span style="font-size:1.08rem;font-weight:700;color:#2ecc71;">Trust Certificate — Signature Verified</span>
+</div>
+<table style="width:100%;font-size:0.86rem;color:#d7dadd;border-collapse:collapse;">
+<tr><td style="padding:4px 0;color:#9aa0a6;width:180px;vertical-align:top;">File</td><td>{file.name}</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">File SHA-256</td><td style="font-family:monospace;word-break:break-all;">{file_sha256}</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Signature algorithm</td><td>RSA-2048 + PSS + SHA-256</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Key fingerprint (SPKI SHA-256)</td><td style="font-family:monospace;word-break:break-all;">{key_fp}</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Verified at</td><td>{verified_at}</td></tr>
+</table>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "A valid signature proves the file exactly matches what this key holder signed — it does not "
+                    "by itself prove who the key holder is. Only trust a public key you received directly from the signer."
+                )
+                cert_text = (
+                    "SENTINELAI SECURE VAULT — DIGITAL SIGNATURE TRUST CERTIFICATE\n"
+                    "================================================================\n"
+                    f"File:                 {file.name}\n"
+                    f"File SHA-256:         {file_sha256}\n"
+                    "Signature algorithm:  RSA-2048 + PSS + SHA-256\n"
+                    f"Key fingerprint:      {key_fp}\n"
+                    "                      (SHA-256 of the DER-encoded SubjectPublicKeyInfo)\n"
+                    f"Verified at:          {verified_at}\n"
+                    "Result:               VALID — signature matches file and public key\n"
+                    "\n"
+                    "Note: this certificate proves the signature is mathematically valid for\n"
+                    "this exact file and the public key supplied at verification time. It does\n"
+                    "NOT independently prove the real-world identity behind that key — only\n"
+                    "trust a public key you received directly from the signer.\n"
+                )
+                st.download_button(
+                    "⬇️ Download Trust Certificate (.txt)",
+                    data=cert_text,
+                    file_name=f"trust_certificate_{file.name}.txt",
+                    mime="text/plain",
+                )
             else:
                 st.error("🚨 Signature is INVALID — file may have been tampered with, or wrong key.")
                 _ledger_log("Signature INVALID", file.name, "", "🚨")
