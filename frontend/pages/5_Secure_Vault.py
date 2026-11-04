@@ -1,5 +1,6 @@
 """Secure Vault page: AES encryption, RSA signatures, SHA-256 integrity."""
 import hashlib
+import html
 import math
 from datetime import datetime
 
@@ -305,6 +306,14 @@ with tab_verify:
         cert = st.session_state["vault_cert"]
         st.success("✅ Signature is VALID — file is authentic and unmodified.")
         st.divider()
+        # cert['file_name'] comes from the uploaded file's own .name — fully
+        # user-controlled — so it MUST be HTML-escaped before going into this
+        # unsafe_allow_html block. Without this, a file named e.g.
+        # "<img src=x onerror=alert(1)>.txt" would execute as real HTML on
+        # this page (a self-XSS reflected into the uploader's own session).
+        # The other fields here are server-computed hex digests/timestamps,
+        # not user input, so they don't need the same treatment.
+        safe_file_name = html.escape(cert["file_name"])
         st.markdown(
             f"""<div style="border:1px solid #2ecc71;border-radius:10px;padding:18px 22px;background:linear-gradient(135deg,#0e2518,#12161c);">
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
@@ -312,7 +321,7 @@ with tab_verify:
 <span style="font-size:1.08rem;font-weight:700;color:#2ecc71;">Trust Certificate — Signature Verified</span>
 </div>
 <table style="width:100%;font-size:0.86rem;color:#d7dadd;border-collapse:collapse;">
-<tr><td style="padding:4px 0;color:#9aa0a6;width:180px;vertical-align:top;">File</td><td>{cert['file_name']}</td></tr>
+<tr><td style="padding:4px 0;color:#9aa0a6;width:180px;vertical-align:top;">File</td><td>{safe_file_name}</td></tr>
 <tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">File SHA-256</td><td style="font-family:monospace;word-break:break-all;">{cert['file_sha256']}</td></tr>
 <tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Signature algorithm</td><td>RSA-2048 + PSS + SHA-256</td></tr>
 <tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Key fingerprint (SPKI SHA-256)</td><td style="font-family:monospace;word-break:break-all;">{cert['key_fp']}</td></tr>

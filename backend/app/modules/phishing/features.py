@@ -58,6 +58,83 @@ def _normalize(raw_url: str) -> str:
     return url
 
 
+def parse_url_parts(raw_url: str) -> dict:
+    """Breaks a URL into scheme/subdomain/registered-domain/TLD/path/query
+    for the plain-English "URL Anatomy" display and the brand-impersonation
+    check below. This is heuristic and DISPLAY-ONLY — it is never fed into
+    the trained model (extract_features() above is the only thing that
+    does that). Multi-part TLDs (co.uk, com.pk, ...) aren't specially
+    handled, so "registered_domain" can be off by one label for those —
+    fine for a visual breakdown, not something to rely on for a security
+    decision, which is exactly why this stays separate from the model."""
+    raw = raw_url.strip()
+    scheme_match = SCHEME_PATTERN.match(raw)
+    scheme = scheme_match.group(0)[:-3] if scheme_match else "(none)"
+
+    normalized = _normalize(raw)
+    try:
+        parsed = urlparse("http://" + normalized)
+        hostname = parsed.netloc or ""
+        path = parsed.path or ""
+        query = parsed.query or ""
+    except ValueError:
+        hostname, path, query = "", normalized, ""
+
+    if IP_PATTERN.match(hostname):
+        # An IP address isn't domain/subdomain-structured — labelling "1" as
+        # a "TLD" would be actively misleading in the anatomy display, so
+        # this is called out as its own case instead.
+        tld, registered_domain, subdomain = "", hostname, None
+    else:
+        labels = [label for label in hostname.split(".") if label]
+        if len(labels) >= 2:
+            tld = labels[-1]
+            registered_domain = labels[-2]
+            subdomain = ".".join(labels[:-2]) or None
+        elif len(labels) == 1:
+            tld, registered_domain, subdomain = "", labels[0], None
+        else:
+            tld, registered_domain, subdomain = "", "", None
+
+    return {
+        "scheme": scheme,
+        "hostname": hostname,
+        "subdomain": subdomain,
+        "registered_domain": registered_domain,
+        "tld": tld,
+        "path": path,
+        "query": query,
+        "is_ip_based": bool(IP_PATTERN.match(hostname)),
+    }
+
+
+# Brand names attackers commonly impersonate via lookalike subdomains or
+# hyphenated fake domains (e.g. "paypal-secure-login.verify-account.ru").
+# Deliberately a short, high-signal list rather than an exhaustive one —
+# this is an illustrative rule-based check, not a trademark database.
+IMPERSONATION_BRANDS = [
+    "paypal", "amazon", "google", "microsoft", "apple", "facebook", "instagram",
+    "whatsapp", "netflix", "binance", "coinbase", "chase", "wellsfargo", "hbl",
+    "meezan", "ubl", "easypaisa", "jazzcash", "github", "linkedin", "dropbox",
+]
+
+
+def check_brand_impersonation(url_parts: dict) -> dict | None:
+    """A SEPARATE, rule-based heuristic — NOT part of the trained model's
+    decision or its SHAP explanation. Flags a well-known brand name
+    appearing somewhere in the hostname when it is NOT that brand's own
+    registered domain — the classic lookalike-subdomain / hyphenated-fake-
+    domain trick. Returns None when nothing matches (the common case)."""
+    host = (url_parts.get("hostname") or "").lower()
+    registered = (url_parts.get("registered_domain") or "").lower()
+    if not host:
+        return None
+    for brand in IMPERSONATION_BRANDS:
+        if brand in host and registered != brand:
+            return {"brand": brand, "registered_domain": url_parts.get("registered_domain") or "(unknown)"}
+    return None
+
+
 def extract_features(raw_url: str) -> dict:
     normalized = _normalize(raw_url)
     # urlparse needs *a* scheme to split host vs. path correctly.

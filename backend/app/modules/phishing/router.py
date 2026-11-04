@@ -11,7 +11,7 @@ from app.api.deps import get_current_user
 from app.db.database import get_db
 from app.db.models import ModuleName
 from app.modules.ml_common import load_bundle, predict_with_explanation
-from app.modules.phishing.features import extract_features
+from app.modules.phishing.features import check_brand_impersonation, extract_features, parse_url_parts
 from app.services.alert_service import record_alert
 
 router = APIRouter(prefix="/phishing", tags=["phishing"])
@@ -47,10 +47,17 @@ def check_url(payload: URLCheckRequest, db: Session = Depends(get_db), user=Depe
     result = predict_with_explanation(bundle, feature_row)
     is_malicious = result["label"] == "malicious"
 
+    url_parts = parse_url_parts(payload.url)
+    impersonation = check_brand_impersonation(url_parts)
+
+    title = f"URL classified as {'PHISHING/MALICIOUS' if is_malicious else 'benign'}"
+    if impersonation:
+        title += f" — resembles {impersonation['brand'].title()}"
+
     alert = record_alert(
         db,
         module=ModuleName.phishing,
-        title=f"URL classified as {'PHISHING/MALICIOUS' if is_malicious else 'benign'}",
+        title=title,
         is_malicious=is_malicious,
         confidence=result["confidence"],
         explanation=result["explanation"],
@@ -64,5 +71,8 @@ def check_url(payload: URLCheckRequest, db: Session = Depends(get_db), user=Depe
         "label": result["label"],
         "confidence": result["confidence"],
         "explanation": result["explanation"],
+        "feature_row": feature_row,
+        "url_parts": url_parts,
+        "impersonation": impersonation,
         "alert_id": alert.id,
     }
