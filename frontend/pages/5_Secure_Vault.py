@@ -88,7 +88,7 @@ with tab_keys:
 with tab_sign:
     st.subheader("Sign a file")
     file = st.file_uploader("File to sign", key="sign_file")
-    priv_key = st.text_area("Your private key (PEM)", height=120, key="sign_priv")
+    priv_key = st.text_area("Your private key (PEM)", height=120, key="sign_priv", help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Sign below — otherwise the old value is used.")
     key_pw = st.text_input("Private key passphrase (if set)", type="password", key="sign_priv_pw")
     if st.button("✍️ Sign") and file and priv_key:
         data = {"private_key_pem": priv_key}
@@ -108,8 +108,8 @@ with tab_sign:
 with tab_verify:
     st.subheader("Verify a signature")
     file = st.file_uploader("Original file", key="verify_file")
-    sig_b64 = st.text_area("Signature (base64)", height=100, key="verify_sig")
-    pub_key = st.text_area("Signer's public key (PEM)", height=120, key="verify_pub")
+    sig_b64 = st.text_area("Signature (base64)", height=100, key="verify_sig", help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Verify below — otherwise the old value is used.")
+    pub_key = st.text_area("Signer's public key (PEM)", height=120, key="verify_pub", help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Verify below — otherwise the old value is used.")
     if st.button("✅ Verify") and file and sig_b64 and pub_key:
         resp = requests.post(
             f"{BACKEND_URL}/api/v1/vault/verify", headers=_headers(),
