@@ -39,9 +39,22 @@ class SecurityHeadersToggle(BaseModel):
     enabled: bool
 
 
+def _normalize_host(raw: str) -> str:
+    """Accept either a bare host ('example.com', 'localhost:3000') or a full
+    URL ('https://example.com/') and return just 'host[:port]', so a target
+    typed either way is stored/matched consistently. Without this, a target
+    added as a full URL (with scheme + trailing slash) would silently never
+    match the bare host the scanner checks against at scan time."""
+    raw = raw.strip()
+    if "://" in raw:
+        raw = urlparse(raw).netloc
+    return raw.rstrip("/")
+
+
 def _is_authorized(db: Session, host: str) -> bool:
     from app.core.config import settings
 
+    host = _normalize_host(host)
     hostname = host.split(":")[0]
     if hostname in settings.DEFAULT_AUTHORIZED_SCAN_TARGETS:
         return True
@@ -66,13 +79,14 @@ def add_target(payload: AddTargetRequest, db: Session = Depends(get_db), user=De
             status_code=400,
             detail="confirmed_authorized must be true — this scanner only runs against hosts you own or are authorized to test.",
         )
-    existing = db.query(AuthorizedScanTarget).filter(AuthorizedScanTarget.host == payload.host).first()
+    host = _normalize_host(payload.host)
+    existing = db.query(AuthorizedScanTarget).filter(AuthorizedScanTarget.host == host).first()
     if existing:
-        return {"message": "already authorized", "host": payload.host}
-    target = AuthorizedScanTarget(host=payload.host, added_by=user.username, note=payload.note)
+        return {"message": "already authorized", "host": host}
+    target = AuthorizedScanTarget(host=host, added_by=user.username, note=payload.note)
     db.add(target)
     db.commit()
-    return {"message": "target authorized", "host": payload.host}
+    return {"message": "target authorized", "host": host}
 
 
 @router.get("/security-headers")
