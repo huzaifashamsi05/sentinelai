@@ -1,5 +1,6 @@
 """Secure Vault page: AES encryption, RSA signatures, SHA-256 integrity."""
 import math
+from datetime import datetime
 
 import streamlit as st
 import requests
@@ -13,6 +14,38 @@ require_login()
 
 st.title("🔐 Secure Vault")
 st.caption("AES-256 file encryption, RSA-2048 digital signatures, SHA-256 integrity verification, audit logging.")
+
+st.session_state.setdefault("vault_ledger", [])
+
+
+def _ledger_log(action: str, filename: str, sha256: str = "", status: str = "✅"):
+    """Appends one row to this session's live Vault Ledger (newest first)."""
+    st.session_state["vault_ledger"].insert(
+        0,
+        {
+            "Time": datetime.now().strftime("%H:%M:%S"),
+            "Status": status,
+            "Action": action,
+            "File": filename or "—",
+            "SHA-256": (sha256[:16] + "…") if sha256 else "—",
+        },
+    )
+
+
+with st.expander(
+    f"🗂️ Session Vault Ledger — {len(st.session_state['vault_ledger'])} action(s) this session",
+    expanded=False,
+):
+    if st.session_state["vault_ledger"]:
+        st.dataframe(st.session_state["vault_ledger"], hide_index=True, use_container_width=True)
+        if st.button("🧹 Clear Ledger"):
+            st.session_state["vault_ledger"] = []
+            st.rerun()
+    else:
+        st.caption(
+            "No actions logged yet this session — every encrypt, decrypt, hash, sign, verify, "
+            "keypair, and tampering-simulation action will appear here automatically, newest first."
+        )
 
 
 def _crack_time_estimate(pw: str):
@@ -100,8 +133,10 @@ with tab_encrypt:
             st.session_state["vault_demo_filename"] = file.name
             st.session_state["vault_demo_hash"] = original_hash
             st.session_state["vault_demo_password"] = password
+            _ledger_log("Encrypted", file.name, original_hash, "✅")
         else:
             st.error(resp.text)
+            _ledger_log("Encrypt Failed", file.name, "", "🚨")
 
     if st.session_state.get("vault_demo_blob"):
         st.divider()
@@ -129,12 +164,16 @@ with tab_encrypt:
             )
             if resp2.status_code == 409:
                 st.error("🚨 TAMPERING DETECTED — SHA-256 integrity check failed. The file's content changed after it was encrypted.")
+                _ledger_log("Tampering Simulated", tampered_name, "", "🚨")
             elif resp2.status_code == 400:
                 st.error("🚨 TAMPERING DETECTED — the modified file failed to decrypt cleanly (corrupted padding/ciphertext).")
+                _ledger_log("Tampering Simulated", tampered_name, "", "🚨")
             elif resp2.status_code == 200:
                 st.warning("The tampered file still decrypted without error — click Simulate Tampering again.")
+                _ledger_log("Tampering Simulated", tampered_name, "", "⚠️")
             else:
                 st.error(resp2.json().get("detail", resp2.text))
+                _ledger_log("Tampering Simulated", tampered_name, "", "🚨")
             st.caption(
                 "Why this gets caught: AES-CBC by itself has no built-in authenticity check — it will happily "
                 "decrypt garbage. What actually catches the tampering is the SHA-256 of the original file, "
@@ -156,13 +195,17 @@ with tab_decrypt:
             files={"file": (file.name, file.getvalue())}, data=data, timeout=30,
         )
         if resp.status_code == 200:
-            st.success(f"Decrypted successfully. SHA-256: {resp.headers.get('X-SHA256', '')}")
+            actual_hash = resp.headers.get("X-SHA256", "")
+            st.success(f"Decrypted successfully. SHA-256: {actual_hash}")
             out_name = file.name[:-4] if file.name.endswith(".enc") else f"decrypted_{file.name}"
             st.download_button("⬇️ Download decrypted file", data=resp.content, file_name=out_name)
+            _ledger_log("Decrypted", file.name, actual_hash, "✅")
         elif resp.status_code == 409:
             st.error("🚨 INTEGRITY CHECK FAILED — this file was modified after it was encrypted!")
+            _ledger_log("Integrity FAILED", file.name, "", "🚨")
         else:
             st.error(resp.json().get("detail", resp.text))
+            _ledger_log("Decrypt Failed", file.name, "", "🚨")
 
 with tab_hash:
     st.subheader("Quick SHA-256 integrity hash")
@@ -175,8 +218,10 @@ with tab_hash:
         if resp.status_code == 200:
             result = resp.json()
             st.code(f"{result['filename']}  ({result['size_bytes']} bytes)\nSHA-256: {result['sha256']}")
+            _ledger_log("Hashed", result["filename"], result["sha256"], "✅")
         else:
             st.error(resp.text)
+            _ledger_log("Hash Failed", file.name, "", "🚨")
 
 with tab_keys:
     st.subheader("Generate an RSA-2048 keypair")
@@ -191,8 +236,10 @@ with tab_keys:
             st.warning(result["warning"])
             st.text_area("Private key (save this — not stored server-side)", result["private_key_pem"], height=150)
             st.text_area("Public key (share this with whoever will verify your signatures)", result["public_key_pem"], height=150)
+            _ledger_log("Keypair Generated", "RSA-2048 keypair", "", "✅")
         else:
             st.error(resp.text)
+            _ledger_log("Keypair Generation Failed", "-", "", "🚨")
 
 with tab_sign:
     st.subheader("Sign a file")
@@ -211,8 +258,10 @@ with tab_sign:
             result = resp.json()
             st.success("Signed.")
             st.text_area("Signature (base64) — share this + your public key to let others verify", result["signature_b64"], height=100)
+            _ledger_log("Signed", result["filename"], result["sha256"], "✅")
         else:
             st.error(resp.json().get("detail", resp.text))
+            _ledger_log("Sign Failed", file.name, "", "🚨")
 
 with tab_verify:
     st.subheader("Verify a signature")
@@ -229,10 +278,13 @@ with tab_verify:
             result = resp.json()
             if result["signature_valid"]:
                 st.success("✅ Signature is VALID — file is authentic and unmodified.")
+                _ledger_log("Signature VALID", file.name, "", "✅")
             else:
                 st.error("🚨 Signature is INVALID — file may have been tampered with, or wrong key.")
+                _ledger_log("Signature INVALID", file.name, "", "🚨")
         else:
             st.error(resp.json().get("detail", resp.text))
+            _ledger_log("Verify Failed", file.name, "", "🚨")
 
 st.divider()
 st.caption("All actions above are written to the audit log and the unified Alert feed on the Home page.")
