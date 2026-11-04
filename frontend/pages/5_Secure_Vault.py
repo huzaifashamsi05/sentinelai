@@ -32,22 +32,6 @@ def _ledger_log(action: str, filename: str, sha256: str = "", status: str = "✅
     )
 
 
-with st.expander(
-    f"🗂️ Session Vault Ledger — {len(st.session_state['vault_ledger'])} action(s) this session",
-    expanded=False,
-):
-    if st.session_state["vault_ledger"]:
-        st.dataframe(st.session_state["vault_ledger"], hide_index=True, use_container_width=True)
-        if st.button("🧹 Clear Ledger"):
-            st.session_state["vault_ledger"] = []
-            st.rerun()
-    else:
-        st.caption(
-            "No actions logged yet this session — every encrypt, decrypt, hash, sign, verify, "
-            "keypair, and tampering-simulation action will appear here automatically, newest first."
-        )
-
-
 def _crack_time_estimate(pw: str):
     """Transparent, entropy-based estimate of offline crack time. Not a real
     zxcvbn-style model — just charset size x length, assuming ~10 billion
@@ -287,4 +271,19 @@ with tab_verify:
             _ledger_log("Verify Failed", file.name, "", "🚨")
 
 st.divider()
+with st.expander(
+    f"🗂️ Session Vault Ledger — {len(st.session_state['vault_ledger'])} action(s) this session",
+    expanded=False,
+):
+    if st.session_state["vault_ledger"]:
+        st.dataframe(st.session_state["vault_ledger"], hide_index=True, use_container_width=True)
+        if st.button("🧹 Clear Ledger"):
+            st.session_state["vault_ledger"] = []
+            st.rerun()
+    else:
+        st.caption(
+            "No actions logged yet this session — every encrypt, decrypt, hash, sign, verify, "
+            "keypair, and tampering-simulation action will appear here automatically, newest first."
+        )
+
 st.caption("All actions above are written to the audit log and the unified Alert feed on the Home page.")
