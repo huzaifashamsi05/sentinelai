@@ -96,8 +96,51 @@ with tab_encrypt:
             st.success("File encrypted.")
             st.code(f"SHA-256 of original file (save this to verify integrity later):\n{original_hash}")
             st.download_button("⬇️ Download encrypted file", data=resp.content, file_name=f"{file.name}.enc")
+            st.session_state["vault_demo_blob"] = resp.content
+            st.session_state["vault_demo_filename"] = file.name
+            st.session_state["vault_demo_hash"] = original_hash
+            st.session_state["vault_demo_password"] = password
         else:
             st.error(resp.text)
+
+    if st.session_state.get("vault_demo_blob"):
+        st.divider()
+        st.subheader("🧪 Live Demo: Simulate Tampering")
+        st.caption(
+            "Flip a single byte inside the encrypted file and try to decrypt it live — "
+            "exactly what happens if an attacker (or a corrupted transfer) modifies the file after encryption."
+        )
+        if st.button("⚠️ Simulate Tampering & Re-Decrypt"):
+            blob = bytearray(st.session_state["vault_demo_blob"])
+            header_len = 32  # 16-byte salt + 16-byte IV, before the ciphertext starts
+            num_blocks = max(1, (len(blob) - header_len) // 16)
+            target_block = max(0, num_blocks - 3)
+            flip_offset = header_len + target_block * 16
+            blob[flip_offset] ^= 0x01
+            tampered_name = f'{st.session_state["vault_demo_filename"]}.enc'
+            resp2 = requests.post(
+                f"{BACKEND_URL}/api/v1/vault/decrypt", headers=_headers(),
+                files={"file": (tampered_name, bytes(blob))},
+                data={
+                    "password": st.session_state["vault_demo_password"],
+                    "expected_sha256": st.session_state["vault_demo_hash"],
+                },
+                timeout=30,
+            )
+            if resp2.status_code == 409:
+                st.error("🚨 TAMPERING DETECTED — SHA-256 integrity check failed. The file's content changed after it was encrypted.")
+            elif resp2.status_code == 400:
+                st.error("🚨 TAMPERING DETECTED — the modified file failed to decrypt cleanly (corrupted padding/ciphertext).")
+            elif resp2.status_code == 200:
+                st.warning("The tampered file still decrypted without error — click Simulate Tampering again.")
+            else:
+                st.error(resp2.json().get("detail", resp2.text))
+            st.caption(
+                "Why this gets caught: AES-CBC by itself has no built-in authenticity check — it will happily "
+                "decrypt garbage. What actually catches the tampering is the SHA-256 of the original file, "
+                "captured the moment you encrypted it, compared against the hash of whatever comes out the "
+                "other side of decryption."
+            )
 
 with tab_decrypt:
     st.subheader("Decrypt a file + verify it wasn't tampered with")
