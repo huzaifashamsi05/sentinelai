@@ -1,4 +1,6 @@
 """Secure Vault page: AES encryption, RSA signatures, SHA-256 integrity."""
+import math
+
 import streamlit as st
 import requests
 
@@ -12,6 +14,55 @@ require_login()
 st.title("🔐 Secure Vault")
 st.caption("AES-256 file encryption, RSA-2048 digital signatures, SHA-256 integrity verification, audit logging.")
 
+
+def _crack_time_estimate(pw: str):
+    """Transparent, entropy-based estimate of offline crack time. Not a real
+    zxcvbn-style model — just charset size x length, assuming ~10 billion
+    guesses/second (a fast offline GPU attack), shown for illustration."""
+    if not pw:
+        return "", "", 0.0, "#5f6368"
+    charset = 0
+    if any(c.islower() for c in pw):
+        charset += 26
+    if any(c.isupper() for c in pw):
+        charset += 26
+    if any(c.isdigit() for c in pw):
+        charset += 10
+    if any(not c.isalnum() for c in pw):
+        charset += 32
+    charset = max(charset, 1)
+    entropy_bits = len(pw) * math.log2(charset)
+    guesses = (2 ** entropy_bits) / 2
+    seconds = guesses / 10_000_000_000
+
+    if seconds < 1:
+        time_str = "instantly"
+    elif seconds < 60:
+        time_str = f"{seconds:.0f} seconds"
+    elif seconds < 3600:
+        time_str = f"{seconds / 60:.0f} minutes"
+    elif seconds < 86400:
+        time_str = f"{seconds / 3600:.0f} hours"
+    elif seconds < 31536000:
+        time_str = f"{seconds / 86400:.0f} days"
+    elif seconds < 31536000 * 100:
+        time_str = f"{seconds / 31536000:.0f} years"
+    else:
+        time_str = "centuries"
+
+    if entropy_bits < 28:
+        label, score, color = "Very Weak", 0.15, "#e74c3c"
+    elif entropy_bits < 36:
+        label, score, color = "Weak", 0.35, "#e67e22"
+    elif entropy_bits < 60:
+        label, score, color = "Fair", 0.55, "#f1c40f"
+    elif entropy_bits < 80:
+        label, score, color = "Strong", 0.8, "#2ecc71"
+    else:
+        label, score, color = "Very Strong", 1.0, "#27ae60"
+    return label, time_str, score, color
+
+
 tab_encrypt, tab_decrypt, tab_hash, tab_keys, tab_sign, tab_verify = st.tabs(
     ["Encrypt", "Decrypt / Verify Integrity", "Hash a File", "Generate Keypair", "Sign", "Verify Signature"]
 )
@@ -20,6 +71,21 @@ with tab_encrypt:
     st.subheader("Encrypt a file (AES-256)")
     file = st.file_uploader("File to encrypt", key="enc_file")
     password = st.text_input("Encryption password (min 8 chars)", type="password", key="enc_pw")
+    if password:
+        _label, _ctime, _score, _color = _crack_time_estimate(password)
+        st.markdown(
+            f"""<div style="margin:2px 0 10px 0;">
+<div style="background:#2a2d35;border-radius:6px;height:8px;overflow:hidden;">
+<div style="width:{_score * 100:.0f}%;background:{_color};height:100%;transition:width .2s ease;"></div>
+</div>
+<div style="display:flex;justify-content:space-between;margin-top:4px;font-size:0.82rem;">
+<span style="color:{_color};font-weight:600;">{_label}</span>
+<span style="color:#9aa0a6;">Est. crack time: {_ctime}</span>
+</div>
+</div>""",
+            unsafe_allow_html=True,
+        )
+        st.caption("Estimate assumes a fast offline attack (~10 billion guesses/sec) — for illustration, not a guarantee.")
     if st.button("🔒 Encrypt", type="primary") and file and password:
         resp = requests.post(
             f"{BACKEND_URL}/api/v1/vault/encrypt", headers=_headers(),
