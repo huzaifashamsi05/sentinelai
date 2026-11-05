@@ -1,10 +1,23 @@
-"""Phishing & Malicious URL Detector page."""
-import html
+"""
+Phishing & Malicious URL Detector page.
+
+Rebuilt per direction change: the Red Flags Checklist (a 3-column list of
+titles + paragraph captions) and the plain URL Anatomy chip row are
+replaced by one live "scan" scene — the real URL gets split into its real
+pieces, the pieces that actually tripped a real signal light up, and a
+verdict stamps down with a confidence ring. Same model, same backend, same
+honest "lexical/structural, no network calls" scope, same brand-
+impersonation rule-based check — only the presentation changed. SHAP and
+the full feature-by-feature explanation are kept, folded into one
+collapsed, opt-in section instead of being open by default.
+"""
+import json
 from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, require_login
@@ -14,7 +27,7 @@ ensure_backend()
 require_login()
 
 st.title("🎣 Phishing & Malicious URL Detector")
-st.caption("Classifies a URL using lexical/structural features — no network calls, works instantly on any URL.")
+st.caption("Paste a link, watch it get X-rayed — no network calls, just the shape of the URL itself.")
 
 status = api_get("/phishing/status").json()
 if not status.get("model_loaded"):
@@ -23,38 +36,34 @@ if not status.get("model_loaded"):
 
 samples = api_get("/phishing/sample-requests").json()
 
-# Plain-English gloss for every feature the model sees. Used two ways below:
-# the 6 boolean ones drive the Red Flags Checklist directly; all of them are
-# available to explain whichever features the SHAP chart surfaces as top
-# contributors for a given URL (which can include the continuous ones).
 _FEATURE_EXPLAIN = {
     "has_ip_address": {
-        "title": "Uses a raw IP address instead of a domain",
+        "pill": "IP address", "title": "Uses a raw IP address instead of a domain",
         "why": "Legitimate sites almost always have a registered domain name. A URL pointing "
                "straight at an IP address (e.g. http://192.168.1.1/login) is a strong red flag.",
     },
     "has_at_symbol": {
-        "title": "Contains an \"@\" symbol",
+        "pill": "hidden “@”", "title": "Contains an \"@\" symbol",
         "why": "Browsers ignore everything before an \"@\" in a URL's authority section — attackers "
                "abuse this to show a trusted-looking prefix while the real destination is hidden after it.",
     },
     "has_https_token_in_path": {
-        "title": "The word \"https\" appears in the path, not the scheme",
+        "pill": "fake https", "title": "The word \"https\" appears in the path, not the scheme",
         "why": "Putting the literal word \"https\" inside the path or query (not as the actual scheme) "
                "is a trick to make a link look secure at a glance when it isn't.",
     },
     "has_suspicious_keyword": {
-        "title": "Contains a high-risk keyword",
+        "pill": "risky wording", "title": "Contains a high-risk keyword",
         "why": "Words like \"login\", \"verify\", \"secure\", \"account\", or \"bank\" are common phishing "
                "bait, designed to create urgency or impersonate an account-security notice.",
     },
     "is_url_shortener": {
-        "title": "Uses a URL-shortener domain",
+        "pill": "shortener", "title": "Uses a URL-shortener domain",
         "why": "Shorteners (bit.ly, tinyurl.com, ...) hide the real destination entirely until you click — "
                "legitimate and malicious links both use them, but it removes your ability to pre-screen the link.",
     },
     "has_double_slash_redirect": {
-        "title": "Has an extra \"//\" later in the URL",
+        "pill": "hidden redirect", "title": "Has an extra \"//\" later in the URL",
         "why": "A second \"//\" partway through a URL can be used to smuggle in an open-redirect to a "
                "different destination than the one you'd expect from the start of the link.",
     },
@@ -71,7 +80,7 @@ _FEATURE_EXPLAIN = {
     "digit_ratio": {"title": "Proportion of the URL that's digits", "why": "Same rationale as digit count — a high ratio often signals an obfuscated or auto-generated URL."},
 }
 
-_CHECKLIST_FEATURES = [
+_PILL_ORDER = [
     "has_ip_address", "has_at_symbol", "has_https_token_in_path",
     "has_suspicious_keyword", "is_url_shortener", "has_double_slash_redirect",
 ]
@@ -82,57 +91,259 @@ def _render_shap_chart(explanation: list[dict]) -> None:
     exp_df["direction"] = exp_df["impact"].apply(lambda x: "Pushes toward phishing" if x > 0 else "Pushes toward benign")
     fig = px.bar(
         exp_df.sort_values("impact"), x="impact", y="feature", orientation="h",
-        color="direction", color_discrete_map={"Pushes toward phishing": "#D64545", "Pushes toward benign": "#4A90D9"},
+        color="direction", color_discrete_map={"Pushes toward phishing": "#ff5d63", "Pushes toward benign": "#2dd4c8"},
     )
-    fig.update_layout(height=280, yaxis_title="", xaxis_title="SHAP impact", margin=dict(t=10, b=10))
+    fig.update_layout(
+        height=260, yaxis_title="", xaxis_title="SHAP impact", margin=dict(t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#ECEDF2"},
+        legend_title_text="",
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 
-def _render_url_anatomy(parts: dict, impersonation: dict | None) -> None:
-    # Every value here comes from parsing a URL the user typed in, and this
-    # is rendered via unsafe_allow_html — so every value MUST be HTML-escaped
-    # before interpolation. Without this, a URL whose path/query happens to
-    # contain "<script>..." or similar would execute as real HTML on this
-    # page (a self-XSS, reflected into the user's own session) — exactly the
-    # kind of bug a security-education project shouldn't ship with.
-    def chip(label: str, value: str, bg: str = "#2d3748", border: str = "#4a5568") -> str:
-        safe_value = html.escape(str(value))
-        return (
-            f'<span style="background:{bg};border:1px solid {border};border-radius:6px;'
-            f'padding:3px 10px;margin:2px 4px 2px 0;display:inline-block;font-family:monospace;'
-            f'font-size:0.85em;">{label}: <b>{safe_value}</b></span>'
-        )
+_SCAN_TEMPLATE = r"""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  *{box-sizing:border-box}
+  html,body{margin:0;background:transparent;overflow:hidden;}
+  body{ font-family:'IBM Plex Sans', system-ui, sans-serif; color:#e8edf3; padding:2px; }
+  .mono{ font-family:'IBM Plex Mono', monospace; }
+  .display{ font-family:'Chakra Petch', system-ui, sans-serif; }
 
-    chips = [chip("scheme", parts.get("scheme") or "(none)")]
-    if parts.get("is_ip_based"):
-        chips.append(chip("host", parts.get("hostname", ""), bg="#5a3a1a", border="#d69e2e"))
+  .console{
+    background: linear-gradient(180deg, #121822 0%, #0a0e13 120%);
+    border:1px solid #232d3a; border-radius:18px;
+    padding: 24px clamp(14px, 3vw, 30px) 22px;
+    display:flex; gap:24px; align-items:stretch; position:relative; overflow:hidden;
+    flex-wrap:wrap;
+  }
+  .console::before{
+    content:""; position:absolute; inset:0;
+    background: radial-gradient(600px 220px at 12% -15%, color-mix(in srgb, #2dd4c8 10%, transparent), transparent 60%);
+    pointer-events:none;
+  }
+
+  .left{ flex:1 1 320px; min-width:0; display:flex; flex-direction:column; gap:16px; position:relative; }
+
+  .url-row{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+  .seg{
+    border-radius:9px; padding:7px 11px; font-size:0.82rem; border:1px solid #232d3a;
+    background:#121822; color:#7f8ea0; transition: all 0.35s ease; min-width:0;
+  }
+  .seg .k{ font-size:0.62rem; text-transform:lowercase; color:#5a6676; display:block; margin-bottom:1px; }
+  .seg .v{ font-family:'IBM Plex Mono', monospace; color:#c7d0dc; word-break:break-all; }
+  .seg.flagged{
+    border-color:#ff5d63; background:color-mix(in srgb, #ff5d63 12%, #121822);
+    box-shadow:0 0 14px -4px #ff5d6388;
+  }
+  .seg.flagged .v{ color:#ffd3d5; }
+  .seg.clean{ border-color:#2dd4c855; }
+  .seg.scheme{ flex:0 0 auto; opacity:0.75; }
+  .seg.path{ flex:1 1 160px; }
+
+  .pills{ display:flex; flex-wrap:wrap; gap:7px; }
+  .pill{
+    display:flex; align-items:center; gap:6px; padding:5px 10px 5px 8px; border-radius:999px;
+    border:1px solid #232d3a; background:#121822; font-size:0.72rem; color:#4b5768;
+    transition: all 0.3s ease; cursor:default;
+  }
+  .pill .dot{ width:7px; height:7px; border-radius:50%; background:#2d3744; flex-shrink:0; transition: all 0.3s ease; }
+  .pill.on{ border-color:#ff5d63; color:#ffb3b6; background:color-mix(in srgb, #ff5d63 10%, #121822); }
+  .pill.on .dot{ background:#ff5d63; box-shadow:0 0 6px 1px #ff5d6399; animation: pill-pulse 1.6s ease-in-out infinite; }
+  @keyframes pill-pulse{ 0%,100%{ opacity:1 } 50%{ opacity:0.55 } }
+
+  .imp-row{ display:flex; align-items:center; gap:10px; font-size:0.78rem; }
+  .imp-chip{ border-radius:9px; padding:6px 11px; border:1px solid #232d3a; background:#121822; }
+  .imp-chip .k{ font-size:0.62rem; color:#5a6676; display:block; }
+  .imp-chip.bad{ border-color:#ffb238; background:color-mix(in srgb, #ffb238 10%, #121822); color:#ffe0a3; }
+  .imp-chip.real{ color:#c7d0dc; }
+  .imp-arrow{ color:#ffb238; font-size:1rem; }
+
+  .right{
+    flex:0 0 150px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:8px; position:relative;
+  }
+  .ring-wrap{ position:relative; width:112px; height:112px; }
+  .ring-wrap svg{ transform:rotate(-90deg); width:112px; height:112px; }
+  .ring-bg{ fill:none; stroke:#1b222c; stroke-width:6; }
+  .ring-fg{ fill:none; stroke:var(--vc,#2dd4c8); stroke-width:6; stroke-linecap:round;
+            stroke-dasharray:301; stroke-dashoffset:301; opacity:0;
+            transition: stroke-dashoffset 0.9s cubic-bezier(.3,.6,.3,1), opacity 0.3s ease; }
+  .stamp{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:2px; transform:scale(0.4); opacity:0; transition: transform 0.45s cubic-bezier(.3,1.4,.4,1), opacity 0.3s ease;
+  }
+  .stamp.show{ transform:scale(1); opacity:1; }
+  .stamp svg{ width:30px; height:30px; }
+  .stamp .word{ font-size:0.74rem; font-weight:600; letter-spacing:0.02em; }
+  .conf{ font-size:0.72rem; color:#7f8ea0; }
+  .conf .n{ font-family:'IBM Plex Mono', monospace; color:#c7d0dc; font-weight:600; }
+
+  .placeholder{ color:#4b5768; font-size:0.82rem; text-align:center; }
+
+  @media (max-width:560px){
+    .console{ flex-direction:column; }
+    .right{ flex:0 0 auto; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .stamp, .ring-fg, .pill, .seg{ transition-duration:0.01s !important; }
+  }
+</style>
+
+<div class="console">
+  <div class="left">
+    <div class="url-row" id="urlRow"></div>
+    <div class="pills" id="pills"></div>
+    <div class="imp-row" id="impRow" style="display:none;"></div>
+  </div>
+  <div class="right">
+    <div class="ring-wrap">
+      <svg viewBox="0 0 112 112">
+        <circle class="ring-bg" cx="56" cy="56" r="48"></circle>
+        <circle class="ring-fg" id="ring" cx="56" cy="56" r="48"></circle>
+      </svg>
+      <div class="stamp" id="stamp">
+        <svg id="stampIcon" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></svg>
+        <div class="word display" id="stampWord"></div>
+      </div>
+      <div class="placeholder" id="placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:0 14px;">paste a url above</div>
+    </div>
+    <div class="conf" id="confLine" style="visibility:hidden;">confidence <span class="n" id="confN">0%</span></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const data = __PAYLOAD_JSON__;
+  const urlRow = document.getElementById('urlRow');
+  const pillsEl = document.getElementById('pills');
+  const impRow = document.getElementById('impRow');
+  const ring = document.getElementById('ring');
+  const stamp = document.getElementById('stamp');
+  const stampIcon = document.getElementById('stampIcon');
+  const stampWord = document.getElementById('stampWord');
+  const placeholder = document.getElementById('placeholder');
+  const confLine = document.getElementById('confLine');
+  const confN = document.getElementById('confN');
+
+  function seg(kind, label, value, cls){
+    const d = document.createElement('div');
+    d.className = 'seg ' + cls + (kind === 'scheme' ? ' scheme' : kind === 'path' ? ' path' : '');
+    const k = document.createElement('span'); k.className = 'k'; k.textContent = label;
+    const v = document.createElement('span'); v.className = 'v'; v.textContent = value;
+    d.appendChild(k); d.appendChild(v);
+    return d;
+  }
+
+  if (!data.hasResult) {
+    urlRow.appendChild(seg('scheme', 'scheme', '—', 'clean'));
+    urlRow.appendChild(seg('host', 'address', 'waiting for a url', 'clean'));
+  } else {
+    urlRow.appendChild(seg('scheme', 'scheme', data.scheme || '(none)', 'clean'));
+    urlRow.appendChild(seg('host', data.isIp ? 'ip address' : 'address', data.host || '(none)', data.hostFlagged ? 'flagged' : 'clean'));
+    if (data.path) urlRow.appendChild(seg('path', 'path', data.path + (data.query ? ('?' + data.query) : ''), data.pathFlagged ? 'flagged' : 'clean'));
+  }
+
+  (data.pills || []).forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'pill' + (p.on ? ' on' : '');
+    el.title = p.why || '';
+    const dot = document.createElement('span'); dot.className = 'dot';
+    const label = document.createElement('span'); label.textContent = p.label;
+    el.appendChild(dot); el.appendChild(label);
+    pillsEl.appendChild(el);
+  });
+
+  if (data.impersonation) {
+    impRow.style.display = 'flex';
+    const claims = document.createElement('div'); claims.className = 'imp-chip bad';
+    claims.innerHTML = '<span class="k">claims to be</span>';
+    const claimsV = document.createElement('span'); claimsV.textContent = data.impersonation.brand; claims.appendChild(claimsV);
+    const arrow = document.createElement('span'); arrow.className = 'imp-arrow'; arrow.textContent = '≠';
+    const real = document.createElement('div'); real.className = 'imp-chip real';
+    real.innerHTML = '<span class="k">actually</span>';
+    const realV = document.createElement('span'); realV.textContent = data.impersonation.registered_domain; real.appendChild(realV);
+    impRow.appendChild(claims); impRow.appendChild(arrow); impRow.appendChild(real);
+  }
+
+  if (data.hasResult) {
+    placeholder.style.display = 'none';
+    confLine.style.visibility = 'visible';
+    const malicious = data.isMalicious;
+    const color = malicious ? '#ff5d63' : '#2dd4c8';
+    ring.style.setProperty('--vc', color);
+    ring.style.stroke = color;
+    stampWord.style.color = color;
+    stampIcon.setAttribute('stroke', color);
+    stampWord.textContent = malicious ? 'PHISHING' : 'SAFE';
+    stampIcon.innerHTML = malicious
+      ? '<path d="M18 6 6 18M6 6l12 12"/>'
+      : '<path d="M20 6 9 17l-5-5"/>';
+
+    const pct = Math.max(0, Math.min(1, data.confidence));
+    setTimeout(() => {
+      ring.style.opacity = '1';
+      ring.style.strokeDashoffset = (301 * (1 - pct)).toFixed(1);
+      stamp.classList.add('show');
+      let shown = 0;
+      const target = Math.round(pct * 100);
+      const start = performance.now(), dur = 700;
+      function step(t){
+        const p = Math.min(1, (t - start) / dur);
+        const val = Math.round(target * (1 - Math.pow(1 - p, 3)));
+        if (val !== shown) { shown = val; confN.textContent = val + '%'; }
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }, 120);
+  }
+})();
+</script>
+"""
+
+
+def _render_scan(result: dict | None, checked_url: str | None) -> None:
+    payload = {"hasResult": False}
+    if result:
+        parts = result["url_parts"]
+        fr = result["feature_row"]
+        imp = result.get("impersonation")
+        host_flagged = bool(fr.get("has_ip_address") or fr.get("is_url_shortener") or fr.get("has_at_symbol") or imp)
+        path_flagged = bool(fr.get("has_https_token_in_path") or fr.get("has_double_slash_redirect"))
+        host_display = parts.get("hostname") or "(none)"
+        if not parts.get("is_ip_based"):
+            sub = parts.get("subdomain")
+            domain = f'{parts.get("registered_domain", "")}.{parts["tld"]}' if parts.get("tld") else parts.get("registered_domain", "")
+            host_display = f"{sub}.{domain}" if sub else domain
+
+        payload = {
+            "hasResult": True,
+            "scheme": parts.get("scheme"),
+            "host": host_display,
+            "isIp": bool(parts.get("is_ip_based")),
+            "hostFlagged": host_flagged,
+            "path": parts.get("path") or "",
+            "query": parts.get("query") or "",
+            "pathFlagged": path_flagged,
+            "pills": [
+                {"label": _FEATURE_EXPLAIN[f]["pill"], "on": bool(fr.get(f)), "why": _FEATURE_EXPLAIN[f]["title"]}
+                for f in _PILL_ORDER
+            ],
+            "impersonation": (
+                {"brand": imp["brand"].title(), "registered_domain": imp["registered_domain"]} if imp else None
+            ),
+            "isMalicious": bool(result["is_malicious"]),
+            "confidence": float(result["confidence"]),
+        }
     else:
-        if parts.get("subdomain"):
-            flagged = bool(impersonation)
-            chips.append(chip(
-                "subdomain", parts["subdomain"],
-                bg="#5a1f1f" if flagged else "#2d3748",
-                border="#e53e3e" if flagged else "#4a5568",
-            ))
-        domain_display = f'{parts.get("registered_domain", "")}.{parts["tld"]}' if parts.get("tld") else parts.get("registered_domain", "")
-        chips.append(chip("domain", domain_display or "(none)"))
-    if parts.get("path"):
-        chips.append(chip("path", parts["path"]))
-    if parts.get("query"):
-        chips.append(chip("query", parts["query"]))
+        payload["pills"] = [{"label": _FEATURE_EXPLAIN[f]["pill"], "on": False, "why": _FEATURE_EXPLAIN[f]["title"]} for f in _PILL_ORDER]
 
-    st.markdown(" ".join(chips), unsafe_allow_html=True)
-
-    if parts.get("is_ip_based"):
-        st.caption("⚠️ This is a raw IP address, not a registered domain — legitimate sites almost never link this way.")
-
-    if impersonation:
-        st.warning(
-            f"⚠️ **Looks like it's impersonating {impersonation['brand'].title()}** — the hostname contains "
-            f"\"{impersonation['brand']}\", but the actual registered domain is "
-            f"**{impersonation['registered_domain']}**, not {impersonation['brand']}.com. This is a separate, "
-            f"rule-based check — not part of the ML model's verdict above."
-        )
+    html = _SCAN_TEMPLATE.replace("__PAYLOAD_JSON__", json.dumps(payload))
+    # Generous enough to cover the wrapped (narrow-viewport) layout, where the
+    # right-hand ring column drops below the left column and the pill row can
+    # wrap to 2-3 lines — a little extra whitespace on a wide desktop view is
+    # a smaller cost than clipped content on a phone.
+    components.html(html, height=400 if not (result and result.get("impersonation")) else 460, scrolling=False)
 
 
 st.session_state.setdefault("phish_ledger", [])
@@ -150,9 +361,6 @@ def _ledger_log(checked_url: str, label: str, confidence: float, impersonation: 
 
 
 def _check_url(checked_url: str) -> dict | None:
-    """One-time side effect: calls the API and logs the ledger row. Kept
-    separate from rendering so a later rerun (e.g. clicking the download
-    button below) never re-calls the API or double-logs the ledger."""
     resp = api_post("/phishing/check", json_body={"url": checked_url})
     if resp.status_code != 200:
         st.error(f"Check failed: {resp.text}")
@@ -160,69 +368,6 @@ def _check_url(checked_url: str) -> dict | None:
     result = resp.json()
     _ledger_log(checked_url, result["label"], result["confidence"], result.get("impersonation"))
     return result
-
-
-def _display_result(result: dict, checked_url: str) -> None:
-    """Pure rendering, no side effects — safe to call on every rerun,
-    including the one triggered by clicking the download button below."""
-    if result["is_malicious"]:
-        st.error(f"🚨 **PHISHING / MALICIOUS** — confidence {result['confidence']:.0%}")
-    else:
-        st.success(f"✅ **Benign** — confidence {result['confidence']:.0%}")
-
-    st.markdown("##### URL Anatomy")
-    _render_url_anatomy(result["url_parts"], result.get("impersonation"))
-
-    st.markdown("##### 🚩 Red Flags Checklist")
-    feature_row = result["feature_row"]
-    cols = st.columns(3)
-    for i, feat in enumerate(_CHECKLIST_FEATURES):
-        info = _FEATURE_EXPLAIN[feat]
-        flagged = bool(feature_row.get(feat))
-        with cols[i % 3]:
-            st.markdown(f"{'🚩' if flagged else '✅'} **{info['title']}**")
-            if flagged:
-                st.caption(info["why"])
-
-    st.markdown("##### Why the model decided this (SHAP)")
-    _render_shap_chart(result["explanation"])
-    with st.expander("What do these mean?"):
-        for item in result["explanation"]:
-            info = _FEATURE_EXPLAIN.get(item["feature"])
-            if not info:
-                continue
-            direction = "pushed toward **phishing**" if item["impact"] > 0 else "pushed toward **benign**"
-            st.markdown(f"- **{info['title']}** (value: `{item['value']}`) — {direction}. {info['why']}")
-
-    report_lines = [
-        "SENTINELAI PHISHING & MALICIOUS URL CHECK — REPORT",
-        "=" * 55,
-        f"URL:         {checked_url}",
-        f"Checked at:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"Verdict:     {'PHISHING / MALICIOUS' if result['is_malicious'] else 'BENIGN'}",
-        f"Confidence:  {result['confidence']:.0%}",
-        "",
-    ]
-    imp = result.get("impersonation")
-    if imp:
-        report_lines += [
-            f"Brand impersonation flag: resembles {imp['brand'].title()}, but registered domain is "
-            f"'{imp['registered_domain']}' (separate rule-based check, not part of the ML model's decision).",
-            "",
-        ]
-    report_lines.append("Top contributing features (SHAP):")
-    for item in result["explanation"]:
-        info = _FEATURE_EXPLAIN.get(item["feature"], {})
-        direction = "toward phishing" if item["impact"] > 0 else "toward benign"
-        report_lines.append(f"  - {info.get('title', item['feature'])} (value: {item['value']}) — {direction}")
-
-    st.download_button(
-        "⬇️ Download Check Report (.txt)",
-        data="\n".join(report_lines),
-        file_name="phishing_check_report.txt",
-        mime="text/plain",
-    )
-    st.caption("This event has been recorded in the unified Alert feed on the Home page.")
 
 
 c1, c2 = st.columns([3, 1])
@@ -239,14 +384,55 @@ with c1:
     url = st.text_input("Enter a URL to check", placeholder="https://example.com/login", key="phish_url_input")
 
 if st.button("🔍 Check URL", type="primary") and url:
-    with st.spinner("Analyzing URL..."):
+    with st.spinner("Scanning..."):
         result = _check_url(url)
     if result:
         st.session_state["phish_last_result"] = result
         st.session_state["phish_last_url"] = url
 
-if "phish_last_result" in st.session_state:
-    _display_result(st.session_state["phish_last_result"], st.session_state["phish_last_url"])
+_last_result = st.session_state.get("phish_last_result")
+_last_url = st.session_state.get("phish_last_url")
+_render_scan(_last_result, _last_url)
+
+if _last_result:
+    with st.expander("Why the model decided this (SHAP)", expanded=False):
+        _render_shap_chart(_last_result["explanation"])
+        for item in _last_result["explanation"]:
+            info = _FEATURE_EXPLAIN.get(item["feature"])
+            if not info:
+                continue
+            direction = "pushed toward **phishing**" if item["impact"] > 0 else "pushed toward **benign**"
+            st.markdown(f"- **{info['title']}** (value: `{item['value']}`) — {direction}. {info['why']}")
+
+    report_lines = [
+        "SENTINELAI PHISHING & MALICIOUS URL CHECK — REPORT",
+        "=" * 55,
+        f"URL:         {_last_url}",
+        f"Checked at:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Verdict:     {'PHISHING / MALICIOUS' if _last_result['is_malicious'] else 'BENIGN'}",
+        f"Confidence:  {_last_result['confidence']:.0%}",
+        "",
+    ]
+    imp = _last_result.get("impersonation")
+    if imp:
+        report_lines += [
+            f"Brand impersonation flag: resembles {imp['brand'].title()}, but registered domain is "
+            f"'{imp['registered_domain']}' (separate rule-based check, not part of the ML model's decision).",
+            "",
+        ]
+    report_lines.append("Top contributing features (SHAP):")
+    for item in _last_result["explanation"]:
+        info = _FEATURE_EXPLAIN.get(item["feature"], {})
+        direction = "toward phishing" if item["impact"] > 0 else "toward benign"
+        report_lines.append(f"  - {info.get('title', item['feature'])} (value: {item['value']}) — {direction}")
+
+    st.download_button(
+        "⬇️ Download Check Report (.txt)",
+        data="\n".join(report_lines),
+        file_name="phishing_check_report.txt",
+        mime="text/plain",
+    )
+    st.caption("This event has been recorded in the unified Alert feed on the Home page.")
 
 st.divider()
 with st.expander(f"🗂️ Session Check History — {len(st.session_state['phish_ledger'])} check(s) this session", expanded=False):
