@@ -28,6 +28,17 @@ MODULE_ICON = {
 MODULE_ORDER = list(MODULE_ICON.keys())
 RISK_WEIGHT = {"High": 10, "Medium": 5, "Low": 2}
 
+# Every column the overview screen's helpers index into df[...] with. Needed
+# because pd.DataFrame([]) (what the API returns right after a reboot, or
+# for a brand-new demo session with zero alerts logged anywhere yet) has
+# ZERO columns, not just zero rows — so df["module"] etc. raise a bare
+# KeyError rather than behaving like "no matching rows". Most of the
+# helpers below already guard with `if df.empty: return`, but that guard
+# is only as good as every call site remembering to add it; forcing these
+# columns to exist at the one place df is built makes every downstream
+# df["..."] safe by construction instead of by convention.
+_ALERT_COLUMNS = ["created_at", "module", "title", "severity", "is_malicious", "confidence"]
+
 
 def login_screen():
     st.markdown(
@@ -312,7 +323,12 @@ def overview_screen():
     # avoids re-querying the backend once per widget.
     history_resp = api_get("/alerts", params={"limit": 1000})
     df = pd.DataFrame(history_resp.json()) if history_resp.status_code == 200 else pd.DataFrame()
-    if not df.empty:
+    if df.empty:
+        # pd.DataFrame([]) / pd.DataFrame() have no columns at all — give it
+        # the real schema so every df["..."] below is a safe "no rows" read
+        # instead of a KeyError. See _ALERT_COLUMNS above for why.
+        df = pd.DataFrame(columns=_ALERT_COLUMNS)
+    else:
         df["created_at"] = pd.to_datetime(df["created_at"], utc=True)
 
     col1, col2, col3, col4 = st.columns(4)
