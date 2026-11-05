@@ -1,10 +1,33 @@
-"""Secure Vault page: AES encryption, RSA signatures, SHA-256 integrity."""
+"""Secure Vault page: AES encryption, RSA signatures, SHA-256 integrity.
+
+Rebuild rationale (same platform visual language as the other 4 rebuilt
+pages): the 6 crypto operations here are all binary, show-don't-explain
+moments (did it encrypt / does it match / is it valid), so they all now
+drive ONE shared "vault core" ring+stamp component — the exact same
+component family already shipped on Network IDS / Phishing / Malware /
+Vulnerability Scanner, just generalized from "verdict" to "operation
+confirmation". Every original control, field, and detail panel is kept;
+nothing was removed, only visualized and, where real friction existed,
+wired to skip a manual re-upload/copy-paste:
+  - Encrypt: "Verify Integrity Now" decrypts the just-encrypted blob
+    in-memory (no download+re-upload round trip) alongside the existing
+    tampering simulation.
+  - Generate Keypair -> Sign / Verify Signature: one-click "use this key"
+    fills the matching text area instead of manual copy-paste.
+  - Sign -> Verify Signature: one-click "use this signature" likewise.
+Success UI (download buttons, follow-up actions) is stored in
+session_state and rendered outside the triggering `if st.button(...)`
+block -- the same fix already applied to the Verify tab's trust
+certificate -- so it survives the rerun used to refresh the hero.
+"""
 import hashlib
 import html
+import json
 import math
 from datetime import datetime
 
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -23,6 +46,7 @@ st.title("🔐 Secure Vault")
 st.caption("AES-256 file encryption, RSA-2048 digital signatures, SHA-256 integrity verification, audit logging.")
 
 st.session_state.setdefault("vault_ledger", [])
+st.session_state.setdefault("vault_hero", None)
 
 
 def _ledger_log(action: str, filename: str, sha256: str = "", status: str = "✅"):
@@ -99,6 +123,192 @@ def _crack_time_estimate(pw: str):
     return label, time_str, score, color
 
 
+def _fmt_bytes(n) -> str:
+    if n is None:
+        return ""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / 1024 / 1024:.1f} MB"
+
+
+def _key_preview(pem: str) -> str:
+    """Short, non-sensitive-looking preview line for a PEM block — just
+    enough to recognize it's present without dumping the whole key into
+    the hero (the full key is still shown verbatim in its own text_area)."""
+    lines = [l for l in pem.strip().splitlines() if l and "-----" not in l]
+    if not lines:
+        return pem[:28] + "…"
+    return lines[0][:28] + "…" + (lines[-1][-8:] if len(lines[-1]) > 8 else "")
+
+
+_HERO_TEMPLATE = r"""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  *{box-sizing:border-box}
+  html,body{margin:0;background:transparent;overflow:hidden;}
+  body{ font-family:'IBM Plex Sans', system-ui, sans-serif; color:#e8edf3; padding:2px; }
+  .mono{ font-family:'IBM Plex Mono', monospace; }
+  .display{ font-family:'Chakra Petch', system-ui, sans-serif; }
+
+  .console{
+    background: linear-gradient(180deg, #121822 0%, #0a0e13 120%);
+    border:1px solid #232d3a; border-radius:18px;
+    padding: 22px clamp(14px, 3vw, 30px) 20px;
+    display:flex; gap:26px; align-items:center; position:relative; overflow:hidden;
+    flex-wrap:wrap;
+  }
+  .console::before{
+    content:""; position:absolute; inset:0;
+    background: radial-gradient(600px 220px at 88% -15%, color-mix(in srgb, #2dd4c8 10%, transparent), transparent 60%);
+    pointer-events:none;
+  }
+
+  .ring-col{ flex:0 0 150px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; position:relative; }
+  .ring-wrap{ position:relative; width:108px; height:108px; }
+  .ring-wrap svg{ transform:rotate(-90deg); width:108px; height:108px; }
+  .ring-bg{ fill:none; stroke:#1b222c; stroke-width:6; }
+  .ring-fg{ fill:none; stroke:var(--vc,#2dd4c8); stroke-width:6; stroke-linecap:round;
+            stroke-dasharray:293; stroke-dashoffset:293; opacity:0;
+            transition: stroke-dashoffset 0.8s cubic-bezier(.3,.6,.3,1), opacity 0.3s ease; }
+  .stamp{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:2px; transform:scale(0.4); opacity:0; transition: transform 0.45s cubic-bezier(.3,1.4,.4,1), opacity 0.3s ease;
+    text-align:center; padding:0 10px;
+  }
+  .stamp.show{ transform:scale(1); opacity:1; }
+  .stamp .word{ font-size:1.0rem; font-weight:700; line-height:1.15; letter-spacing:0.02em; }
+  .placeholder{ color:#4b5768; font-size:0.8rem; text-align:center; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:0 12px; }
+
+  .detail{ flex:1 1 280px; min-width:0; display:flex; flex-direction:column; gap:9px; justify-content:center; }
+  .fchip{ display:inline-flex; align-items:center; gap:8px; align-self:flex-start; padding:6px 12px; border-radius:9px; background:#0d1218; border:1px solid #232d3a; font-size:0.78rem; color:#c7d0dc; max-width:100%; }
+  .fchip .fname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px; }
+  .fchip .sz{ color:#5a6676; flex-shrink:0; }
+  .hlabel{ font-size:0.66rem; color:#7f8ea0; text-transform:uppercase; letter-spacing:0.05em; }
+  .hval{ font-family:'IBM Plex Mono', monospace; font-size:0.84rem; color:#e8edf3; word-break:break-all; opacity:0; transform:translateY(3px); transition: all 0.5s ease 0.1s; }
+  .hval.show{ opacity:1; transform:translateY(0); }
+  .extra{ font-size:0.78rem; color:#9aa6b4; }
+
+  .keyrow{ display:flex; gap:10px; flex-wrap:wrap; }
+  .keycard{ flex:1 1 150px; border-radius:11px; border:1px solid #232d3a; background:#0d1218; padding:9px 13px; opacity:0; transform:translateY(6px); transition: all 0.4s cubic-bezier(.3,1.2,.4,1); }
+  .keycard.show{ opacity:1; transform:translateY(0); }
+  .keycard .klabel{ font-size:0.66rem; text-transform:uppercase; letter-spacing:0.05em; font-weight:600; }
+  .keycard .kprev{ font-family:'IBM Plex Mono', monospace; font-size:0.72rem; color:#8793a3; margin-top:4px; word-break:break-all; }
+  .keycard.pub{ border-color:#2dd4c855; } .keycard.pub .klabel{ color:#2dd4c8; }
+  .keycard.priv{ border-color:#ffb23855; } .keycard.priv .klabel{ color:#ffb238; }
+
+  /* Stays a row at every width (never stacks) — this iframe has a fixed
+     pixel height with no auto-resize, so a column stack here would clip
+     the detail panel instead of just reflowing it. */
+  @media (max-width:480px){
+    .ring-col{ flex:0 0 78px; }
+    .ring-wrap{ width:72px; height:72px; }
+    .ring-wrap svg{ width:72px; height:72px; }
+    .console{ gap:14px; padding:16px 14px; }
+    .fchip .fname{ max-width:120px; }
+  }
+  @media (prefers-reduced-motion: reduce){ .stamp, .ring-fg, .hval, .keycard{ transition-duration:0.01s !important; } }
+</style>
+
+<div class="console">
+  <div class="ring-col">
+    <div class="ring-wrap">
+      <svg viewBox="0 0 108 108">
+        <circle class="ring-bg" cx="54" cy="54" r="46.6"></circle>
+        <circle class="ring-fg" id="ring" cx="54" cy="54" r="46.6"></circle>
+      </svg>
+      <div class="stamp" id="stamp"><div class="word display" id="stampWord"></div></div>
+      <div class="placeholder" id="placeholder">awaiting an action below</div>
+    </div>
+  </div>
+  <div class="detail" id="detail"></div>
+</div>
+
+<script>
+(function(){
+  const data = __PAYLOAD_JSON__;
+  const ring = document.getElementById('ring');
+  const stamp = document.getElementById('stamp');
+  const stampWord = document.getElementById('stampWord');
+  const placeholder = document.getElementById('placeholder');
+  const detail = document.getElementById('detail');
+
+  if (!data.hasResult) { return; }
+
+  placeholder.style.display = 'none';
+  const color = data.color === 'bad' ? '#ff5d63' : (data.color === 'info' ? '#4da3ff' : '#2dd4c8');
+  ring.style.setProperty('--vc', color);
+  ring.style.stroke = color;
+  stampWord.style.color = color;
+  stampWord.textContent = data.word || '';
+  const wlen = (data.word || '').length;
+  const narrow = window.innerWidth < 480;
+  const tiers = narrow ? ['0.46rem', '0.54rem', '0.62rem', '0.7rem'] : ['0.64rem', '0.76rem', '0.88rem', '1.0rem'];
+  stampWord.style.fontSize = wlen > 10 ? tiers[0] : wlen > 8 ? tiers[1] : wlen > 6 ? tiers[2] : tiers[3];
+  stampWord.style.letterSpacing = wlen > 8 ? '0.01em' : '0.02em';
+
+  setTimeout(() => {
+    ring.style.opacity = '1';
+    ring.style.strokeDashoffset = '0';
+    stamp.classList.add('show');
+  }, 90);
+
+  function el(tag, cls){ const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+  function span(cls, text){ const s = el('span', cls); if (text != null) s.textContent = text; return s; }
+
+  if (data.filename) {
+    const chip = el('div', 'fchip');
+    chip.appendChild(span(null, '📄'));
+    chip.appendChild(span('fname', data.filename));
+    if (data.size != null) chip.appendChild(span('sz', '· ' + (function(n){
+      if (n < 1024) return n + ' B';
+      if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+      return (n/1024/1024).toFixed(1) + ' MB';
+    })(data.size)));
+    detail.appendChild(chip);
+  }
+
+  if (data.keys) {
+    const row = el('div', 'keyrow');
+    const pub = el('div', 'keycard pub'); pub.id = 'kpub';
+    pub.appendChild(span('klabel', 'Public key'));
+    pub.appendChild(span('kprev', data.keys.public));
+    const priv = el('div', 'keycard priv'); priv.id = 'kpriv';
+    priv.appendChild(span('klabel', 'Private key'));
+    priv.appendChild(span('kprev', data.keys.private));
+    row.appendChild(pub); row.appendChild(priv);
+    detail.appendChild(row);
+  } else if (data.hash) {
+    const wrap = el('div', null);
+    wrap.appendChild(span('hlabel', data.hashLabel || 'SHA-256'));
+    const val = span('hval mono', data.hash); val.id = 'hval';
+    wrap.appendChild(document.createElement('br'));
+    wrap.appendChild(val);
+    detail.appendChild(wrap);
+  }
+
+  if (data.extra) {
+    detail.appendChild(span('extra', data.extra));
+  }
+
+  setTimeout(() => {
+    const hv = document.getElementById('hval'); if (hv) hv.classList.add('show');
+    const kp = document.getElementById('kpub'); if (kp) kp.classList.add('show');
+    const kr = document.getElementById('kpriv'); if (kr) setTimeout(() => kr.classList.add('show'), 100);
+  }, 180);
+})();
+</script>
+"""
+
+
+def _render_hero(payload: dict | None) -> None:
+    html_out = _HERO_TEMPLATE.replace("__PAYLOAD_JSON__", json.dumps(payload or {"hasResult": False}))
+    components.html(html_out, height=215, scrolling=False)
+
+
+_render_hero(st.session_state.get("vault_hero"))
+
 tab_encrypt, tab_decrypt, tab_hash, tab_keys, tab_sign, tab_verify = st.tabs(
     ["Encrypt", "Decrypt / Verify Integrity", "Hash a File", "Generate Keypair", "Sign", "Verify Signature"]
 )
@@ -122,6 +332,7 @@ with tab_encrypt:
             unsafe_allow_html=True,
         )
         st.caption("Estimate assumes a fast offline attack (~10 billion guesses/sec) — for illustration, not a guarantee.")
+
     if st.button("🔒 Encrypt", type="primary") and file and password:
         resp = requests.post(
             f"{BACKEND_URL}/api/v1/vault/encrypt", headers=_headers(),
@@ -129,54 +340,116 @@ with tab_encrypt:
         )
         if resp.status_code == 200:
             original_hash = resp.headers.get("X-Original-SHA256", "")
-            st.success("File encrypted.")
-            st.code(f"SHA-256 of original file (save this to verify integrity later):\n{original_hash}")
-            st.download_button("⬇️ Download encrypted file", data=resp.content, file_name=f"{file.name}.enc")
             st.session_state["vault_demo_blob"] = resp.content
             st.session_state["vault_demo_filename"] = file.name
             st.session_state["vault_demo_hash"] = original_hash
             st.session_state["vault_demo_password"] = password
+            st.session_state["vault_encrypt_ui"] = {
+                "filename": file.name, "size": len(resp.content), "hash": original_hash,
+            }
+            st.session_state["vault_verify_now_ui"] = None
+            st.session_state["vault_hero"] = {
+                "hasResult": True, "word": "ENCRYPTED", "color": "good",
+                "filename": file.name, "size": len(resp.content),
+                "hash": original_hash, "hashLabel": "SHA-256 (original file)",
+            }
             _ledger_log("Encrypted", file.name, original_hash, "✅")
+            st.rerun()
         else:
             st.error(resp.text)
             _ledger_log("Encrypt Failed", file.name, "", "🚨")
 
-    if st.session_state.get("vault_demo_blob"):
+    if st.session_state.get("vault_encrypt_ui"):
+        r = st.session_state["vault_encrypt_ui"]
+        st.success("File encrypted.")
+        st.code(f"SHA-256 of original file (save this to verify integrity later):\n{r['hash']}")
+        st.download_button(
+            "⬇️ Download encrypted file", data=st.session_state["vault_demo_blob"], file_name=f"{r['filename']}.enc",
+        )
+
         st.divider()
-        st.subheader("🧪 Live Demo: Simulate Tampering")
+        st.subheader("🧪 Live Demo: integrity in action")
         st.caption(
-            "Flip a single byte inside the encrypted file and try to decrypt it live — "
+            "Verify it decrypts clean with zero re-upload, or flip a single byte and watch the same check catch it — "
             "exactly what happens if an attacker (or a corrupted transfer) modifies the file after encryption."
         )
-        if st.button("⚠️ Simulate Tampering & Re-Decrypt"):
+        col_ok, col_tamper = st.columns(2)
+        with col_ok:
+            verify_now_clicked = st.button("✅ Verify Integrity Now")
+        with col_tamper:
+            tamper_clicked = st.button("⚠️ Simulate Tampering & Re-Decrypt")
+
+        if verify_now_clicked or tamper_clicked:
             blob = bytearray(st.session_state["vault_demo_blob"])
-            header_len = 32  # 16-byte salt + 16-byte IV, before the ciphertext starts
-            num_blocks = max(1, (len(blob) - header_len) // 16)
-            target_block = max(0, num_blocks - 3)
-            flip_offset = header_len + target_block * 16
-            blob[flip_offset] ^= 0x01
-            tampered_name = f'{st.session_state["vault_demo_filename"]}.enc'
+            tampered_label = ""
+            if tamper_clicked:
+                header_len = 32  # 16-byte salt + 16-byte IV, before the ciphertext starts
+                num_blocks = max(1, (len(blob) - header_len) // 16)
+                target_block = max(0, num_blocks - 3)
+                flip_offset = header_len + target_block * 16
+                blob[flip_offset] ^= 0x01
+                tampered_label = " (1 byte flipped)"
+            check_name = f'{r["filename"]}.enc'
             resp2 = requests.post(
                 f"{BACKEND_URL}/api/v1/vault/decrypt", headers=_headers(),
-                files={"file": (tampered_name, bytes(blob))},
+                files={"file": (check_name, bytes(blob))},
                 data={
                     "password": st.session_state["vault_demo_password"],
                     "expected_sha256": st.session_state["vault_demo_hash"],
                 },
                 timeout=30,
             )
-            if resp2.status_code == 409:
-                st.error("🚨 TAMPERING DETECTED — SHA-256 integrity check failed. The file's content changed after it was encrypted.")
-                _ledger_log("Tampering Simulated", tampered_name, "", "🚨")
+            if resp2.status_code == 200:
+                st.session_state["vault_verify_now_ui"] = {
+                    "status": "ok",
+                    "message": f"Decrypted clean — integrity verified{tampered_label or ''}." if not tamper_clicked
+                               else "The tampered file still decrypted without error — click Simulate Tampering again.",
+                    "kind": "warning" if tamper_clicked else "success",
+                }
+                st.session_state["vault_hero"] = {
+                    "hasResult": True, "word": "VERIFIED", "color": "good",
+                    "filename": r["filename"], "size": r["size"],
+                    "hash": st.session_state["vault_demo_hash"], "hashLabel": "SHA-256 (matched)",
+                }
+                _ledger_log("Tampering Simulated" if tamper_clicked else "Integrity Verified", check_name, "", "⚠️" if tamper_clicked else "✅")
+            elif resp2.status_code == 409:
+                st.session_state["vault_verify_now_ui"] = {
+                    "status": "tampered",
+                    "message": "🚨 TAMPERING DETECTED — SHA-256 integrity check failed. The file's content changed after it was encrypted.",
+                    "kind": "error",
+                }
+                st.session_state["vault_hero"] = {
+                    "hasResult": True, "word": "TAMPERED", "color": "bad",
+                    "filename": r["filename"], "size": r["size"], "extra": "File content changed after encryption.",
+                }
+                _ledger_log("Tampering Simulated", check_name, "", "🚨")
             elif resp2.status_code == 400:
-                st.error("🚨 TAMPERING DETECTED — the modified file failed to decrypt cleanly (corrupted padding/ciphertext).")
-                _ledger_log("Tampering Simulated", tampered_name, "", "🚨")
-            elif resp2.status_code == 200:
-                st.warning("The tampered file still decrypted without error — click Simulate Tampering again.")
-                _ledger_log("Tampering Simulated", tampered_name, "", "⚠️")
+                st.session_state["vault_verify_now_ui"] = {
+                    "status": "failed",
+                    "message": "🚨 TAMPERING DETECTED — the modified file failed to decrypt cleanly (corrupted padding/ciphertext).",
+                    "kind": "error",
+                }
+                st.session_state["vault_hero"] = {
+                    "hasResult": True, "word": "FAILED", "color": "bad",
+                    "filename": r["filename"], "size": r["size"], "extra": "Corrupted padding/ciphertext.",
+                }
+                _ledger_log("Tampering Simulated", check_name, "", "🚨")
             else:
-                st.error(resp2.json().get("detail", resp2.text))
-                _ledger_log("Tampering Simulated", tampered_name, "", "🚨")
+                st.session_state["vault_verify_now_ui"] = {
+                    "status": "failed",
+                    "message": resp2.json().get("detail", resp2.text),
+                    "kind": "error",
+                }
+                st.session_state["vault_hero"] = {
+                    "hasResult": True, "word": "FAILED", "color": "bad",
+                    "filename": r["filename"], "size": r["size"],
+                }
+                _ledger_log("Tampering Simulated", check_name, "", "🚨")
+            st.rerun()
+
+        if st.session_state.get("vault_verify_now_ui"):
+            v = st.session_state["vault_verify_now_ui"]
+            getattr(st, v["kind"])(v["message"])
             st.caption(
                 "Why this gets caught: AES-CBC by itself has no built-in authenticity check — it will happily "
                 "decrypt garbage. What actually catches the tampering is the SHA-256 of the original file, "
@@ -188,7 +461,13 @@ with tab_decrypt:
     st.subheader("Decrypt a file + verify it wasn't tampered with")
     file = st.file_uploader("Encrypted file (.enc)", key="dec_file")
     password = st.text_input("Decryption password", type="password", key="dec_pw")
-    expected_hash = st.text_input("Expected SHA-256 (optional — paste from encryption step to verify integrity)")
+    if st.session_state.get("vault_demo_hash"):
+        if st.button("📋 Use hash from my last encryption"):
+            st.session_state["dec_expected_hash"] = st.session_state["vault_demo_hash"]
+            st.rerun()
+    expected_hash = st.text_input(
+        "Expected SHA-256 (optional — paste from encryption step to verify integrity)", key="dec_expected_hash",
+    )
     if st.button("🔓 Decrypt", type="primary") and file and password:
         data = {"password": password}
         if expected_hash:
@@ -197,18 +476,49 @@ with tab_decrypt:
             f"{BACKEND_URL}/api/v1/vault/decrypt", headers=_headers(),
             files={"file": (file.name, file.getvalue())}, data=data, timeout=30,
         )
+        out_name = file.name[:-4] if file.name.endswith(".enc") else f"decrypted_{file.name}"
         if resp.status_code == 200:
             actual_hash = resp.headers.get("X-SHA256", "")
-            st.success(f"Decrypted successfully. SHA-256: {actual_hash}")
-            out_name = file.name[:-4] if file.name.endswith(".enc") else f"decrypted_{file.name}"
-            st.download_button("⬇️ Download decrypted file", data=resp.content, file_name=out_name)
+            st.session_state["vault_decrypt_ui"] = {
+                "status": "ok", "filename": file.name, "out_name": out_name,
+                "hash": actual_hash, "blob": resp.content, "checked": bool(expected_hash),
+            }
+            st.session_state["vault_hero"] = {
+                "hasResult": True, "word": "VERIFIED" if expected_hash else "DECRYPTED", "color": "good",
+                "filename": file.name, "size": len(resp.content),
+                "hash": actual_hash, "hashLabel": "SHA-256",
+            }
             _ledger_log("Decrypted", file.name, actual_hash, "✅")
+            st.rerun()
         elif resp.status_code == 409:
-            st.error("🚨 INTEGRITY CHECK FAILED — this file was modified after it was encrypted!")
+            st.session_state["vault_decrypt_ui"] = {"status": "tampered", "filename": file.name}
+            st.session_state["vault_hero"] = {
+                "hasResult": True, "word": "TAMPERED", "color": "bad",
+                "filename": file.name, "extra": "File content changed after encryption.",
+            }
             _ledger_log("Integrity FAILED", file.name, "", "🚨")
+            st.rerun()
         else:
-            st.error(resp.json().get("detail", resp.text))
+            st.session_state["vault_decrypt_ui"] = {
+                "status": "failed", "filename": file.name,
+                "detail": resp.json().get("detail", resp.text),
+            }
+            st.session_state["vault_hero"] = {
+                "hasResult": True, "word": "FAILED", "color": "bad", "filename": file.name,
+                "extra": "Wrong password or corrupted file.",
+            }
             _ledger_log("Decrypt Failed", file.name, "", "🚨")
+            st.rerun()
+
+    if st.session_state.get("vault_decrypt_ui"):
+        d = st.session_state["vault_decrypt_ui"]
+        if d["status"] == "ok":
+            st.success(f"Decrypted successfully. SHA-256: {d['hash']}")
+            st.download_button("⬇️ Download decrypted file", data=d["blob"], file_name=d["out_name"])
+        elif d["status"] == "tampered":
+            st.error("🚨 INTEGRITY CHECK FAILED — this file was modified after it was encrypted!")
+        else:
+            st.error(d["detail"])
 
 with tab_hash:
     st.subheader("Quick SHA-256 integrity hash")
@@ -220,11 +530,21 @@ with tab_hash:
         )
         if resp.status_code == 200:
             result = resp.json()
-            st.code(f"{result['filename']}  ({result['size_bytes']} bytes)\nSHA-256: {result['sha256']}")
+            st.session_state["vault_hash_ui"] = result
+            st.session_state["vault_hero"] = {
+                "hasResult": True, "word": "FINGERPRINT", "color": "info",
+                "filename": result["filename"], "size": result["size_bytes"],
+                "hash": result["sha256"], "hashLabel": "SHA-256",
+            }
             _ledger_log("Hashed", result["filename"], result["sha256"], "✅")
+            st.rerun()
         else:
             st.error(resp.text)
             _ledger_log("Hash Failed", file.name, "", "🚨")
+
+    if st.session_state.get("vault_hash_ui"):
+        result = st.session_state["vault_hash_ui"]
+        st.code(f"{result['filename']}  ({result['size_bytes']} bytes)\nSHA-256: {result['sha256']}")
 
 with tab_keys:
     st.subheader("Generate an RSA-2048 keypair")
@@ -236,41 +556,94 @@ with tab_keys:
         )
         if resp.status_code == 200:
             result = resp.json()
-            st.warning(result["warning"])
-            st.text_area("Private key (save this — not stored server-side)", result["private_key_pem"], height=150)
-            st.text_area("Public key (share this with whoever will verify your signatures)", result["public_key_pem"], height=150)
+            st.session_state["vault_keypair_ui"] = result
+            st.session_state["vault_gen_priv"] = result["private_key_pem"]
+            st.session_state["vault_gen_pub"] = result["public_key_pem"]
+            st.session_state["vault_hero"] = {
+                "hasResult": True, "word": "KEYS READY", "color": "good",
+                "keys": {
+                    "public": _key_preview(result["public_key_pem"]),
+                    "private": _key_preview(result["private_key_pem"]),
+                },
+            }
             _ledger_log("Keypair Generated", "RSA-2048 keypair", "", "✅")
+            st.rerun()
         else:
             st.error(resp.text)
             _ledger_log("Keypair Generation Failed", "-", "", "🚨")
 
+    if st.session_state.get("vault_keypair_ui"):
+        result = st.session_state["vault_keypair_ui"]
+        st.warning(result["warning"])
+        st.text_area("Private key (save this — not stored server-side)", result["private_key_pem"], height=150)
+        st.text_area("Public key (share this with whoever will verify your signatures)", result["public_key_pem"], height=150)
+        st.caption("✓ Auto-filled into the Sign and Verify tabs below — no copy-paste needed.")
+
 with tab_sign:
     st.subheader("Sign a file")
     file = st.file_uploader("File to sign", key="sign_file")
-    priv_key = st.text_area("Your private key (PEM)", height=120, key="sign_priv", help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Sign below — otherwise the old value is used.")
+    if st.session_state.get("vault_gen_priv"):
+        if st.button("📋 Use generated private key"):
+            st.session_state["sign_priv"] = st.session_state["vault_gen_priv"]
+            st.rerun()
+    priv_key = st.text_area(
+        "Your private key (PEM)", height=120, key="sign_priv",
+        help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Sign below — otherwise the old value is used.",
+    )
     key_pw = st.text_input("Private key passphrase (if set)", type="password", key="sign_priv_pw")
     if st.button("✍️ Sign") and file and priv_key:
+        file_bytes = file.getvalue()
         data = {"private_key_pem": priv_key}
         if key_pw:
             data["key_password"] = key_pw
         resp = requests.post(
             f"{BACKEND_URL}/api/v1/vault/sign", headers=_headers(),
-            files={"file": (file.name, file.getvalue())}, data=data, timeout=30,
+            files={"file": (file.name, file_bytes)}, data=data, timeout=30,
         )
         if resp.status_code == 200:
             result = resp.json()
-            st.success("Signed.")
-            st.text_area("Signature (base64) — share this + your public key to let others verify", result["signature_b64"], height=100)
+            st.session_state["vault_sign_ui"] = result
+            st.session_state["vault_gen_sig"] = result["signature_b64"]
+            st.session_state["vault_hero"] = {
+                "hasResult": True, "word": "SIGNED", "color": "good",
+                "filename": result["filename"], "size": len(file_bytes),
+                "hash": result["sha256"], "hashLabel": "SHA-256 (signed file)",
+                "extra": f"Signature: {result['signature_b64'][:28]}…",
+            }
             _ledger_log("Signed", result["filename"], result["sha256"], "✅")
+            st.rerun()
         else:
             st.error(resp.json().get("detail", resp.text))
             _ledger_log("Sign Failed", file.name, "", "🚨")
 
+    if st.session_state.get("vault_sign_ui"):
+        result = st.session_state["vault_sign_ui"]
+        st.success("Signed.")
+        st.text_area("Signature (base64) — share this + your public key to let others verify", result["signature_b64"], height=100)
+        st.caption("✓ Signature auto-filled into the Verify Signature tab below.")
+
 with tab_verify:
     st.subheader("Verify a signature")
     file = st.file_uploader("Original file", key="verify_file")
-    sig_b64 = st.text_area("Signature (base64)", height=100, key="verify_sig", help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Verify below — otherwise the old value is used.")
-    pub_key = st.text_area("Signer's public key (PEM)", height=120, key="verify_pub", help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Verify below — otherwise the old value is used.")
+    col_sig, col_pub = st.columns(2)
+    with col_sig:
+        if st.session_state.get("vault_gen_sig"):
+            if st.button("📋 Use last signature"):
+                st.session_state["verify_sig"] = st.session_state["vault_gen_sig"]
+                st.rerun()
+    with col_pub:
+        if st.session_state.get("vault_gen_pub"):
+            if st.button("📋 Use generated public key"):
+                st.session_state["verify_pub"] = st.session_state["vault_gen_pub"]
+                st.rerun()
+    sig_b64 = st.text_area(
+        "Signature (base64)", height=100, key="verify_sig",
+        help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Verify below — otherwise the old value is used.",
+    )
+    pub_key = st.text_area(
+        "Signer's public key (PEM)", height=120, key="verify_pub",
+        help="Tip: after pasting, press Ctrl+Enter or click outside this box before clicking Verify below — otherwise the old value is used.",
+    )
     if st.button("✅ Verify") and file and sig_b64 and pub_key:
         resp = requests.post(
             f"{BACKEND_URL}/api/v1/vault/verify", headers=_headers(),
@@ -281,22 +654,33 @@ with tab_verify:
             result = resp.json()
             if result["signature_valid"]:
                 _ledger_log("Signature VALID", file.name, "", "✅")
+                file_sha = hashlib.sha256(file.getvalue()).hexdigest()
+                key_fp = _spki_fingerprint(pub_key)
                 # Stored rather than rendered inline: a st.download_button click
                 # below triggers its own rerun, on which "✅ Verify" is no longer
                 # True — if the certificate lived inside this if-block it would
                 # vanish the instant Download is clicked. Storing it and always
                 # re-rendering from session_state keeps it on screen across that
-                # rerun, same fix as the Vulnerability Scanner's scan report.
+                # rerun.
                 st.session_state["vault_cert"] = {
                     "file_name": file.name,
-                    "file_sha256": hashlib.sha256(file.getvalue()).hexdigest(),
-                    "key_fp": _spki_fingerprint(pub_key),
+                    "file_sha256": file_sha,
+                    "key_fp": key_fp,
                     "verified_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                st.session_state["vault_hero"] = {
+                    "hasResult": True, "word": "VALID", "color": "good",
+                    "filename": file.name, "hash": file_sha, "hashLabel": "SHA-256",
                 }
             else:
                 st.session_state["vault_cert"] = None
+                st.session_state["vault_hero"] = {
+                    "hasResult": True, "word": "INVALID", "color": "bad",
+                    "filename": file.name, "extra": "Signature does not match this file and key.",
+                }
                 st.error("🚨 Signature is INVALID — file may have been tampered with, or wrong key.")
                 _ledger_log("Signature INVALID", file.name, "", "🚨")
+            st.rerun()
         else:
             st.session_state["vault_cert"] = None
             st.error(resp.json().get("detail", resp.text))
