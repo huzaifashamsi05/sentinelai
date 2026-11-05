@@ -11,13 +11,26 @@ import pandas as pd
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, is_admin, require_login
+from theme import SEVERITY, inject_global_styles, intro, translate
 
 st.set_page_config(page_title="Network IDS — SentinelAI", page_icon="🌐", layout="wide")
 ensure_backend()
 require_login()
+inject_global_styles()
 
 st.title("🌐 Network Intrusion Detection")
 st.caption("Classifies a network connection as Normal, DoS, Probe, R2L or U2R, trained on the NSL-KDD benchmark.")
+
+intro(
+    "🛡️", "What this page actually does",
+    "A real company's network logs thousands of connection attempts a day — almost all completely ordinary, "
+    "but a few are the first sign of an attack: a flood of junk traffic meant to knock a service offline, "
+    "someone probing for an unlocked door, or an attempt to break in outright. This page runs the same kind "
+    "of classifier a Security Operations Center (SOC) relies on: it looks at a connection's characteristics "
+    "and, in a split second, sorts it into <b>Normal</b> or one of four known attack patterns — then shows "
+    "exactly <i>which</i> signals drove that call, not just the label. Pick a scenario below, or build your "
+    "own, and watch it decide.",
+)
 
 
 def _render_shap_chart(explanation: list[dict], height: int = 260) -> None:
@@ -25,9 +38,13 @@ def _render_shap_chart(explanation: list[dict], height: int = 260) -> None:
     exp_df["direction"] = exp_df["impact"].apply(lambda x: "Pushes toward attack" if x > 0 else "Pushes toward normal")
     fig = px.bar(
         exp_df.sort_values("impact"), x="impact", y="feature", orientation="h",
-        color="direction", color_discrete_map={"Pushes toward attack": "#D64545", "Pushes toward normal": "#4A90D9"},
+        color="direction", color_discrete_map={"Pushes toward attack": SEVERITY["High"], "Pushes toward normal": SEVERITY["Low"]},
     )
-    fig.update_layout(height=height, yaxis_title="", xaxis_title="SHAP impact", margin=dict(t=10, b=10))
+    fig.update_layout(
+        height=height, yaxis_title="", xaxis_title="SHAP impact", margin=dict(t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#ECEDF2"},
+        legend_title_text="",
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 status = api_get("/network-ids/status").json()
@@ -83,18 +100,38 @@ if submitted:
         result = resp.json()
         if result["is_malicious"]:
             st.error(f"🚨 **{result['label'].upper()}** detected — confidence {result['confidence']:.0%}")
+            translate(
+                f"<b>In plain terms:</b> this connection's pattern matches what a "
+                f"<b>{result['label'].upper()}</b> attack usually looks like, and the model is "
+                f"{result['confidence']:.0%} sure of that read. A SOC analyst seeing this would investigate "
+                f"immediately rather than wait for it to show up in tomorrow's log review."
+            )
         else:
             st.success(f"✅ Traffic classified as **{result['label'].upper()}** — confidence {result['confidence']:.0%}")
+            translate(
+                f"<b>In plain terms:</b> nothing about this connection matches a known attack pattern — it "
+                f"reads as ordinary traffic, and the model is {result['confidence']:.0%} confident in that call."
+            )
 
         st.subheader("Why the model decided this (SHAP)")
+        st.caption(
+            "Each bar is one signal the model weighed. Longer blue bars pushed it toward **normal**; longer "
+            "red bars pushed it toward **attack**. This is what makes it explainable instead of a black box."
+        )
         _render_shap_chart(result["explanation"], height=300)
         st.caption("This event has been recorded in the unified Alert feed on the Home page.")
 
 st.divider()
-st.header("🔴 Live Request Monitor")
-st.caption("Classifies REAL HTTP requests reaching this backend, live — using the exact same trained model as the form above.")
 
-with st.expander("ℹ️ What \"live\" means here (read before trusting this)", expanded=False):
+intro(
+    "🔴", "Watching traffic as it happens",
+    "This table shows real HTTP requests hitting this very app's own backend, each one classified the "
+    "instant it arrives by the exact same model used above. It's a live, miniature version of what a SOC's "
+    "monitoring dashboard does around the clock: catch a suspicious pattern the moment it happens, not after "
+    "someone happens to notice it in a log days later.",
+)
+
+with st.expander("🔬 For the technically curious — what \"live\" really means here", expanded=False):
     st.markdown("""
 - **This is HTTP-layer monitoring, not packet-layer.** A Python web app — and especially a Streamlit
   Community Cloud container — has no access to a raw network interface, so it can never capture TCP/IP
@@ -128,8 +165,9 @@ with live_col3:
     burst_clicked = st.button(
         "💥 Generate Demo Burst", use_container_width=True, disabled=not is_admin(),
         help="Fires a quick round of real requests at several of this backend's own endpoints — a "
-             "reconnaissance/probe-style pattern — so you can watch the live classification respond. "
-             "Admin only." if is_admin() else "Admin only.",
+             "reconnaissance/probe-style pattern — so you can watch the live classification respond. No "
+             "traffic to test with? Start here. Admin only." if is_admin() else
+             "Fires real demo traffic so you have something to watch below. Admin only.",
     )
 with live_col4:
     clear_clicked = st.button(
@@ -176,9 +214,15 @@ else:
 
     items = feed["items"]
     if not items:
-        st.info("No requests logged yet — browse the app a little, or click **Generate Demo Burst** above, then **Refresh Feed**.")
+        st.info(
+            "Nothing logged yet — no non-admin visitor has browsed the app this session. "
+            + ("Click **Generate Demo Burst** above, then **Refresh Feed**, to see it in action right now."
+               if is_admin() else "Ask an admin to generate a demo burst, or just browse around the app and click Refresh.")
+        )
     else:
         _LABEL_EMOJI = {"normal": "✅ normal", "dos": "🔴 DoS", "probe": "🟠 probe", "r2l": "🟣 R2L", "u2r": "⚫ U2R"}
+
+        st.caption("🔴🟠🟣⚫ rows below are the ones that look suspicious — everything else is ordinary traffic.")
 
         rows = []
         for item in items:
@@ -196,6 +240,10 @@ else:
         flagged = [it for it in items if it["label"] and it["label"] != "normal"]
         if flagged:
             st.subheader(f"🔍 Flagged entries — why the model decided this ({len(flagged)})")
+            st.caption(
+                "Each one below didn't look like ordinary traffic. Expand it to see, in order of importance, "
+                "exactly which signals pushed the model's call — the same explainability used in the form above."
+            )
             for item in flagged:
                 with st.expander(
                     f"{_LABEL_EMOJI.get(item['label'], item['label'])} — {item['method']} {item['path']} "
