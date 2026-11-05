@@ -1,20 +1,28 @@
 """
-Network Intrusion Detection page. Demonstrates the handbook-required
-before/after narrative: show "normal" traffic pass through clean, then a
-DoS-style attack flagged with an explanation.
+Network Intrusion Detection page.
+
+Rebuilt per direction change: no manual feature-entry form (too technical
+for a non-technical, zero-reading audience), no explanatory text walls.
+The whole page is one live scene — real HTTP requests reaching this app's
+own backend get classified by the trained NSL-KDD model the instant they
+arrive, and the result is shown by literally sorting each one into one of
+five labeled bins, live, with nothing to read first. Same model, same
+backend, same honest "HTTP-layer, not packet-layer" scope as before — only
+the presentation changed. The deep-dive material (SHAP explanations, the
+honest "what live really means" disclosure) is kept, just folded into
+collapsed, opt-in sections at the bottom for anyone who wants it.
 """
+import json
 from datetime import datetime
 
 import plotly.express as px
 import streamlit as st
 import pandas as pd
+import streamlit.components.v1 as components
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, is_admin, require_login
-from theme import (
-    ATTACK_COLORS, MUTED, SEVERITY, inject_global_styles, info_cards, intro,
-    packet_flow, radar_sweep, styled_table, translate,
-)
+from theme import SEVERITY, inject_global_styles
 
 st.set_page_config(page_title="Network IDS — SentinelAI", page_icon="🌐", layout="wide")
 ensure_backend()
@@ -22,21 +30,20 @@ require_login()
 inject_global_styles()
 
 st.title("🌐 Network Intrusion Detection")
-st.caption("Classifies a network connection as Normal, DoS, Probe, R2L or U2R, trained on the NSL-KDD benchmark.")
+st.caption("Watch it sort, don't read it — real traffic to this app, classified live.")
 
-intro(
-    "🛡️", "What this page actually does",
-    "A real company's network logs thousands of connection attempts a day — almost all completely ordinary, "
-    "but a few are the first sign of an attack: a flood of junk traffic meant to knock a service offline, "
-    "someone probing for an unlocked door, or an attempt to break in outright. This page runs the same kind "
-    "of classifier a Security Operations Center (SOC) relies on: it looks at a connection's characteristics "
-    "and, in a split second, sorts it into <b>Normal</b> or one of four known attack patterns — then shows "
-    "exactly <i>which</i> signals drove that call, not just the label. Pick a scenario below, or build your "
-    "own, and watch it decide.",
-)
+# Bin identity — deliberately its own small palette (validated as a concept
+# with the user before this build): teal doubles as both "Normal" and the
+# scene's own brand/interactive color, the four attack types each get a
+# distinct hue. Kept local to this page rather than theme.py's ATTACK_COLORS
+# because the rest of the platform hasn't moved to this token set yet.
+_CATS = ["normal", "dos", "probe", "r2l", "u2r"]
+_BIN_COLORS = {"normal": "#2dd4c8", "dos": "#ff5d63", "probe": "#ffb238", "r2l": "#b48bff", "u2r": "#64748b"}
+_BIN_LABELS = {"normal": "Normal", "dos": "DoS", "probe": "Probe", "r2l": "R2L", "u2r": "U2R"}
+_LABEL_WORD = {"normal": "normal", "dos": "DoS", "probe": "probe", "r2l": "R2L", "u2r": "U2R"}
 
 
-def _render_shap_chart(explanation: list[dict], height: int = 260) -> None:
+def _render_shap_chart(explanation: list[dict], height: int = 220) -> None:
     exp_df = pd.DataFrame(explanation)
     exp_df["direction"] = exp_df["impact"].apply(lambda x: "Pushes toward attack" if x > 0 else "Pushes toward normal")
     fig = px.bar(
@@ -50,109 +57,360 @@ def _render_shap_chart(explanation: list[dict], height: int = 260) -> None:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-_ATTACK_CARDS = [
-    {"key": "normal", "icon": "✅", "title": "Normal", "desc": "Ordinary traffic", "color": ATTACK_COLORS["normal"]},
-    {"key": "dos", "icon": "🔴", "title": "DoS", "desc": "Flooding to knock it offline", "color": ATTACK_COLORS["dos"]},
-    {"key": "probe", "icon": "🟠", "title": "Probe", "desc": "Scanning for a weak spot", "color": ATTACK_COLORS["probe"]},
-    {"key": "r2l", "icon": "🟣", "title": "R2L", "desc": "Remote break-in attempt", "color": ATTACK_COLORS["r2l"]},
-    {"key": "u2r", "icon": "⚫", "title": "U2R", "desc": "Escalating to admin rights", "color": ATTACK_COLORS["u2r"]},
-]
+
+_CONSOLE_TEMPLATE = r"""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  *{box-sizing:border-box}
+  html,body{margin:0;background:transparent;overflow:hidden;}
+  body{
+    font-family:'IBM Plex Sans', system-ui, sans-serif; color:#e8edf3;
+    padding:2px;
+  }
+  .mono{ font-family:'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+
+  .console{
+    background: linear-gradient(180deg, #121822 0%, #0a0e13 120%);
+    border:1px solid #232d3a; border-radius:18px;
+    padding: 22px clamp(14px, 3vw, 30px) 20px;
+    display:flex; flex-direction:column; gap:18px;
+    position:relative; overflow:hidden;
+  }
+  .console::before{
+    content:""; position:absolute; inset:0;
+    background: radial-gradient(600px 220px at 12% -15%, color-mix(in srgb, #2dd4c8 10%, transparent), transparent 60%);
+    pointer-events:none;
+  }
+  .console-head{ display:flex; align-items:center; gap:8px; position:relative; }
+  .status-dot{ width:8px; height:8px; border-radius:50%; background:#2dd4c8; flex-shrink:0; }
+  .status-dot.live{ animation: dot-pulse 1.8s ease-in-out infinite; }
+  .status-dot.paused{ background:#4b5563; }
+  @keyframes dot-pulse{ 0%,100%{ box-shadow:0 0 0 0 #2dd4c866 } 50%{ box-shadow:0 0 0 6px #2dd4c800 } }
+  .console-head span{ font-size:0.74rem; color:#7f8ea0; letter-spacing:0.01em; }
+
+  .lane{
+    position:relative; height:128px; border-radius:14px;
+    background:#0a0e13; border:1px solid #232d3a; overflow:visible;
+  }
+  .source{
+    position:absolute; left:16px; top:50%; translate:0 -50%;
+    display:flex; flex-direction:column; align-items:center; gap:6px; width:58px;
+  }
+  .source .dot{
+    width:32px; height:32px; border-radius:50%;
+    background: radial-gradient(circle at 35% 30%, #30404f, #171f2b);
+    border:1px solid #232d3a; display:flex; align-items:center; justify-content:center;
+    animation: breathe 2.4s ease-in-out infinite;
+  }
+  .source svg{ width:15px; height:15px; stroke:#2dd4c8; }
+  .source span{ font-size:0.66rem; color:#7f8ea0; }
+  @keyframes breathe{ 0%,100%{ box-shadow:0 0 0 0 #2dd4c822 } 50%{ box-shadow:0 0 0 7px #2dd4c800 } }
+
+  .gate{
+    position:absolute; left:46%; top:8%; bottom:8%; width:3px;
+    background: linear-gradient(180deg, transparent, #232d3a 20%, #232d3a 80%, transparent);
+    border-radius:2px; transition:opacity 0.4s ease;
+  }
+  .gate::after{
+    content:""; position:absolute; left:50%; top:0; width:16px; height:100%;
+    translate:-50% 0; background: linear-gradient(180deg, transparent, #2dd4c84d, transparent);
+    animation: scan 2.6s linear infinite;
+  }
+  .gate.paused::after{ animation-play-state: paused; opacity:0.25; }
+  @keyframes scan{ 0%{ transform:translateY(-110%) translateX(-50%) } 100%{ transform:translateY(110%) translateX(-50%) } }
+  .gate.flash::after{ animation-duration:0.45s; }
+  .gate .glabel{ position:absolute; bottom:-20px; left:50%; translate:-50% 0; font-size:0.64rem; color:#7f8ea0; white-space:nowrap; }
+
+  .particle{
+    position:absolute; top:50%; left:2%; width:9px; height:9px; border-radius:50%;
+    translate:-50% -50%; background:#7f8ea0; box-shadow:0 0 0 0 transparent;
+    transition: left 0.8s cubic-bezier(.4,.1,.3,1), top 0.8s cubic-bezier(.4,.1,.3,1),
+                background-color 0.22s linear, box-shadow 0.22s linear, scale 0.55s ease;
+    z-index:3;
+  }
+  .ripple{
+    position:absolute; width:8px; height:8px; border-radius:50%;
+    translate:-50% -50%; border:1.5px solid var(--c); pointer-events:none;
+    animation: ripple-out 0.6s ease-out forwards; z-index:2;
+  }
+  @keyframes ripple-out{ 0%{ transform:translate(-50%,-50%) scale(1); opacity:0.9 } 100%{ transform:translate(-50%,-50%) scale(4.2); opacity:0 } }
+
+  .bins{ display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:clamp(6px,1.4vw,10px); }
+  .bin{
+    background:#121822; border:1px solid #232d3a; border-radius:12px;
+    padding:9px 6px 10px; display:flex; flex-direction:column; align-items:center; gap:6px;
+    position:relative; min-width:0; transition: transform 0.25s ease;
+  }
+  .bin.landed{ transform: translateY(-2px); }
+  .bin .well{
+    width:100%; height:52px; border-radius:8px; background:#0a0e13;
+    border:1px solid #232d3a; position:relative; overflow:hidden;
+  }
+  .bin .fill{
+    position:absolute; left:0; right:0; bottom:0; height:4%;
+    transition: height 0.5s cubic-bezier(.3,.6,.3,1);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--c) 85%, transparent), color-mix(in srgb, var(--c) 35%, transparent));
+  }
+  .bin .well::after{
+    content:""; position:absolute; inset:0; border-radius:8px;
+    box-shadow: inset 0 1px 0 0 #ffffff14; pointer-events:none;
+  }
+  .bin.landed .well{ box-shadow: inset 0 0 0 1px var(--c), 0 0 14px -3px var(--c); }
+  .bin .count{ font-size:clamp(0.95rem,2.4vw,1.2rem); font-weight:600; line-height:1; color:var(--c); }
+  .bin .label{ font-size:clamp(0.62rem,1.6vw,0.72rem); color:#7f8ea0; font-weight:500; white-space:nowrap; }
+
+  .caption{ color:#7f8ea0; font-size:0.78rem; }
+
+  @media (prefers-reduced-motion: reduce){
+    .particle{ transition-duration:0.01s !important; }
+    .gate::after, .source .dot{ animation:none !important; }
+  }
+</style>
+
+<div class="console">
+  <div class="console-head">
+    <div class="status-dot __STATUS_CLASS__"></div>
+    <span>__STATUS_TEXT__</span>
+  </div>
+  <div class="lane" id="lane">
+    <div class="source">
+      <div class="dot">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 20v-6M5 10a7 7 0 0 1 14 0M8 13a4 4 0 0 1 8 0"/></svg>
+      </div>
+      <span>traffic</span>
+    </div>
+    <div class="gate __GATE_CLASS__" id="gate"><span class="glabel">model</span></div>
+  </div>
+  <div class="bins" id="bins">
+    __BINS_HTML__
+  </div>
+  <span class="caption">Every dot is one real request to this app's backend, sorted the instant the model reads it.</span>
+</div>
+
+<script>
+(function(){
+  const payload = __PAYLOAD_JSON__;
+  const lane = document.getElementById('lane');
+  const gate = document.getElementById('gate');
+  const bins = Array.from(document.querySelectorAll('.bin'));
+  const binByKey = Object.fromEntries(bins.map(b => [b.dataset.k, b]));
+  const laneRect = () => lane.getBoundingClientRect();
+
+  function binCenterX(key){
+    const b = binByKey[key]; if(!b) return 50;
+    const br = b.getBoundingClientRect(); const lr = laneRect();
+    return ((br.left + br.width/2) - lr.left) / lr.width * 100;
+  }
+
+  function setBin(key, count){
+    const bin = binByKey[key]; if(!bin) return;
+    bin.querySelector('.count').textContent = count;
+    const sat = 1 - Math.exp(-count/6);
+    bin.querySelector('.fill').style.height = Math.max(4, sat*100) + '%';
+  }
+
+  function landFlash(key){
+    const bin = binByKey[key]; if(!bin) return;
+    bin.classList.add('landed');
+    clearTimeout(bin._t);
+    bin._t = setTimeout(()=>bin.classList.remove('landed'), 480);
+    const well = bin.querySelector('.well');
+    const r = document.createElement('div');
+    r.className = 'ripple';
+    r.style.setProperty('--c', getComputedStyle(bin).getPropertyValue('--c'));
+    r.style.left = '50%'; r.style.top = '50%';
+    well.appendChild(r);
+    setTimeout(()=>r.remove(), 650);
+  }
+
+  // settle to the pre-existing totals with a brief count-up, purely cosmetic
+  Object.keys(payload.prevCounts).forEach(key => {
+    const target = payload.prevCounts[key];
+    let shown = 0;
+    if (target === 0) { setBin(key, 0); return; }
+    const start = performance.now(), dur = 550;
+    function step(t){
+      const p = Math.min(1, (t - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      const val = Math.round(target * eased);
+      if (val !== shown) { shown = val; setBin(key, val); }
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  });
+
+  const running = { ...payload.prevCounts };
+
+  function spawn(key, delay){
+    setTimeout(() => {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      lane.appendChild(p);
+      requestAnimationFrame(() => { p.style.left = '45%'; p.style.top = '50%'; });
+      setTimeout(() => {
+        if (!gate.classList.contains('paused')) {
+          gate.classList.add('flash');
+          setTimeout(()=>gate.classList.remove('flash'), 450);
+        }
+        const c = payload.colors[key] || '#7f8ea0';
+        p.style.background = c;
+        p.style.boxShadow = '0 0 10px 1px ' + c;
+        p.style.left = binCenterX(key) + '%';
+        p.style.top = '90%';
+        p.style.scale = '0.6';
+        setTimeout(() => {
+          running[key] = (running[key] || 0) + 1;
+          setBin(key, running[key]);
+          landFlash(key);
+          p.remove();
+        }, 780);
+      }, 780);
+    }, delay);
+  }
+
+  (payload.newItems || []).forEach((key, i) => spawn(key, i * 190));
+})();
+</script>
+"""
+
+
+def _build_console_html(prev_counts: dict, new_items: list[str], monitor_enabled: bool) -> str:
+    bins_html = "".join(
+        f'<div class="bin" data-k="{k}" style="--c:{_BIN_COLORS[k]}">'
+        f'<div class="well"><div class="fill"></div></div>'
+        f'<div class="count mono">0</div><div class="label">{_BIN_LABELS[k]}</div></div>'
+        for k in _CATS
+    )
+    payload = {
+        "prevCounts": {k: int(prev_counts.get(k, 0)) for k in _CATS},
+        "newItems": new_items,
+        "colors": _BIN_COLORS,
+    }
+    html = _CONSOLE_TEMPLATE
+    html = html.replace("__STATUS_CLASS__", "live" if monitor_enabled else "paused")
+    html = html.replace("__STATUS_TEXT__", "watching live traffic" if monitor_enabled else "monitor paused")
+    html = html.replace("__GATE_CLASS__", "" if monitor_enabled else "paused")
+    html = html.replace("__BINS_HTML__", bins_html)
+    html = html.replace("__PAYLOAD_JSON__", json.dumps(payload))
+    return html
+
 
 status = api_get("/network-ids/status").json()
 if not status.get("model_loaded"):
     st.error("Model not loaded on the backend yet.")
     st.stop()
 
-samples_resp = api_get("/network-ids/sample-requests")
-samples = samples_resp.json() if samples_resp.status_code == 200 else {}
+# ---------------------------------------------------------------------
+# Pull real traffic since this browser session last looked, tally it into
+# running per-category totals (persisted in session_state so a rerun never
+# re-plays history), and hand only the genuinely NEW entries to the scene
+# to animate. First-ever load of a session treats everything already
+# logged as silent baseline, not a sudden burst of "new" activity.
+# ---------------------------------------------------------------------
+if "nids_bin_counts" not in st.session_state:
+    st.session_state.nids_bin_counts = {k: 0 for k in _CATS}
+    st.session_state.nids_last_seen_id = 0
+    st.session_state.nids_seeded = False
 
-scenario = st.radio(
-    "Load a scenario (or edit fields manually below)",
-    ["Normal traffic", "DoS attack", "Custom"],
-    horizontal=True,
+feed_resp = api_get("/network-ids/live-feed", params={"limit": 100})
+if feed_resp.status_code != 200:
+    st.error(f"Could not reach the live feed: {feed_resp.text}")
+    st.stop()
+
+feed = feed_resp.json()
+items = feed["items"]  # newest-first
+monitor_enabled = feed["monitor_enabled"]
+
+if not st.session_state.nids_seeded:
+    # First time this browser session has looked: fold everything already
+    # logged into the baseline, no animation.
+    for it in items:
+        if it["label"]:
+            st.session_state.nids_bin_counts[it["label"]] = st.session_state.nids_bin_counts.get(it["label"], 0) + 1
+    if items:
+        st.session_state.nids_last_seen_id = max(it["id"] for it in items)
+    st.session_state.nids_seeded = True
+    new_entries_chrono = []
+else:
+    new_entries = [it for it in items if it["id"] > st.session_state.nids_last_seen_id]
+    new_entries_chrono = list(reversed(new_entries))  # oldest-first, for animation order
+    if items:
+        st.session_state.nids_last_seen_id = max(st.session_state.nids_last_seen_id, max(it["id"] for it in items))
+
+prev_counts = dict(st.session_state.nids_bin_counts)
+for it in new_entries_chrono:
+    if it["label"]:
+        st.session_state.nids_bin_counts[it["label"]] = st.session_state.nids_bin_counts.get(it["label"], 0) + 1
+
+new_item_labels = [it["label"] for it in new_entries_chrono if it["label"]]
+
+components.html(
+    _build_console_html(prev_counts, new_item_labels, monitor_enabled),
+    height=390,
+    scrolling=False,
 )
 
-defaults = {}
-if scenario == "Normal traffic":
-    defaults = samples.get("normal_example", {})
-elif scenario == "DoS attack":
-    defaults = samples.get("dos_attack_example", {})
+_DEMO_BURST_ENDPOINTS = [
+    "/network-ids/sample-requests", "/phishing/status", "/phishing/sample-requests",
+    "/malware/status", "/alerts", "/alerts/stats",
+    "/vuln-scanner/targets", "/vuln-scanner/security-headers",
+]
 
-with st.form("ids_form"):
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        protocol_type = st.selectbox("Protocol", ["tcp", "udp", "icmp"], index=0)
-        service = st.text_input("Service", value=defaults.get("service", "http"))
-        flag = st.text_input("Flag", value=defaults.get("flag", "SF"))
-    with c2:
-        src_bytes = st.number_input("Source bytes", value=float(defaults.get("src_bytes", 0)))
-        dst_bytes = st.number_input("Destination bytes", value=float(defaults.get("dst_bytes", 0)))
-        count = st.number_input("Count (connections to same host)", value=int(defaults.get("count", 1)))
-    with c3:
-        serror_rate = st.slider("SYN error rate", 0.0, 1.0, float(defaults.get("serror_rate", 0.0)))
-        same_srv_rate = st.slider("Same-service rate", 0.0, 1.0, float(defaults.get("same_srv_rate", 1.0)))
-        dst_host_count = st.number_input("Dest. host count", value=int(defaults.get("dst_host_count", 1)))
+ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1.3, 1, 1, 2.2])
+with ctrl1:
+    burst_clicked = st.button(
+        "💥 Send a burst of traffic", use_container_width=True, disabled=not is_admin(),
+        help="Fires a quick round of real requests at this backend's own endpoints, so there's something "
+             "real to watch sort itself. Admin only." if is_admin() else "Admin only.",
+    )
+with ctrl2:
+    refresh_clicked = st.button("🔄 Refresh", use_container_width=True)
+with ctrl3:
+    clear_clicked = st.button(
+        "🧹 Reset", use_container_width=True, disabled=not is_admin(),
+        help="Admin only." if not is_admin() else "Wipes the live feed and the running counts above.",
+    )
+with ctrl4:
+    if is_admin():
+        pause_label = "⏸️ Pause monitor" if monitor_enabled else "▶️ Resume monitor"
+        if st.button(pause_label):
+            api_post("/network-ids/live-feed/toggle", json_body={"enabled": not monitor_enabled})
+            st.rerun()
 
-    submitted = st.form_submit_button("🔍 Classify Traffic", type="primary", use_container_width=True)
+if clear_clicked and is_admin():
+    api_post("/network-ids/live-feed/clear")
+    st.session_state.nids_bin_counts = {k: 0 for k in _CATS}
+    st.session_state.nids_last_seen_id = 0
+    st.session_state.nids_seeded = True
+    st.toast("Feed and counts reset.", icon="🧹")
+    st.rerun()
 
-highlight_key = None
+if burst_clicked and is_admin():
+    with st.spinner("Firing traffic..."):
+        for ep in _DEMO_BURST_ENDPOINTS:
+            try:
+                api_get(ep)
+            except Exception:
+                pass
+    st.rerun()
 
-if submitted:
-    payload = {
-        "protocol_type": protocol_type, "service": service, "flag": flag,
-        "src_bytes": src_bytes, "dst_bytes": dst_bytes, "count": count,
-        "serror_rate": serror_rate, "same_srv_rate": same_srv_rate,
-        "dst_host_count": dst_host_count,
-    }
-    with st.spinner("Running model..."):
-        resp = api_post("/network-ids/predict", json_body=payload)
+if refresh_clicked:
+    st.rerun()
 
-    if resp.status_code != 200:
-        st.error(f"Prediction failed: {resp.text}")
-    else:
-        result = resp.json()
-        highlight_key = result["label"].lower()
-        if result["is_malicious"]:
-            st.error(f"🚨 **{result['label'].upper()}** detected — confidence {result['confidence']:.0%}")
-            translate(
-                f"<b>In plain terms:</b> this connection's pattern matches what a "
-                f"<b>{result['label'].upper()}</b> attack usually looks like, and the model is "
-                f"{result['confidence']:.0%} sure of that read. A SOC analyst seeing this would investigate "
-                f"immediately rather than wait for it to show up in tomorrow's log review."
-            )
-        else:
-            st.success(f"✅ Traffic classified as **{result['label'].upper()}** — confidence {result['confidence']:.0%}")
-            translate(
-                f"<b>In plain terms:</b> nothing about this connection matches a known attack pattern — it "
-                f"reads as ordinary traffic, and the model is {result['confidence']:.0%} confident in that call."
-            )
-
-        packet_flow(
-            ATTACK_COLORS.get(highlight_key, SEVERITY["Medium"]),
-            verdict_label=result["label"].upper(),
-            source_label="Connection",
-        )
-
-        st.subheader("Why the model decided this (SHAP)")
-        st.caption(
-            "Each bar is one signal the model weighed. Longer blue bars pushed it toward **normal**; longer "
-            "red bars pushed it toward **attack**. This is what makes it explainable instead of a black box."
-        )
-        _render_shap_chart(result["explanation"], height=300)
-        st.caption("This event has been recorded in the unified Alert feed on the Home page.")
-
-st.caption("What each category actually means:" + ("" if highlight_key is None else " (your result is lit up below)"))
-info_cards(_ATTACK_CARDS, highlight_key=highlight_key)
-
-st.divider()
-
-intro(
-    "🔴", "Watching traffic as it happens",
-    "This table shows real HTTP requests hitting this very app's own backend, each one classified the "
-    "instant it arrives by the exact same model used above. It's a live, miniature version of what a SOC's "
-    "monitoring dashboard does around the clock: catch a suspicious pattern the moment it happens, not after "
-    "someone happens to notice it in a log days later.",
+flagged = [it for it in items if it["label"] and it["label"] != "normal"]
+st.caption(
+    f"🔍 {len(flagged)} flagged in the last 100 requests — expand one to see exactly which signals drove the call."
+    if flagged else "🔍 Nothing flagged in the last 100 requests."
 )
+for item in flagged:
+    with st.expander(
+        f"{_LABEL_WORD.get(item['label'], item['label'])} — {item['method']} {item['path']} "
+        f"({item['status_code']}) at {datetime.fromtimestamp(item['ts']).strftime('%H:%M:%S')} "
+        f"— confidence {item['confidence']:.0%}"
+    ):
+        _render_shap_chart(item["explanation"])
+        st.caption("Feature row computed for this request (pre-encoding):")
+        st.json(item["feature_row"], expanded=False)
 
 with st.expander("🔬 For the technically curious — what \"live\" really means here", expanded=False):
     st.markdown("""
@@ -160,7 +418,7 @@ with st.expander("🔬 For the technically curious — what \"live\" really mean
   Community Cloud container — has no access to a raw network interface, so it can never capture TCP/IP
   packets the way NSL-KDD's original 1999 dataset was built (from `tcpdump` on a real network). What it
   *can* see honestly is every HTTP request that actually reaches this backend — so that's exactly what
-  this watches. Nothing below is fabricated traffic.
+  this watches. Nothing here is fabricated traffic.
 - **`protocol_type`/`service` are literally true** (every request here really is `tcp`/`http`), not guessed.
   **`flag`** (the original dataset's raw TCP connection-state) is approximated from the HTTP status code,
   since the web framework never exposes raw TCP flags to application code.
@@ -173,133 +431,9 @@ with st.expander("🔬 For the technically curious — what \"live\" really mean
   change the demonstration, just worth knowing.
 - The model itself was trained on simulated 1999 packet-level traffic, not HTTP semantics — so an HTTP
   pattern that *looks* like an attack to a human (e.g. a login burst) won't always match its learned
-  decision boundary the way a textbook NSL-KDD attack would. That's an honest limitation of reusing a
-  packet-trained model on HTTP-layer signals, not a bug in this page.
-- Like the Vulnerability Scanner, this only ever watches traffic to **this app's own backend** — never
-  anything external.
+  decision boundary the way a textbook NSL-KDD attack would. R2L/U2R in particular need signals (root-shell,
+  compromised-host indicators) an HTTP request can never honestly provide, so they're left at zero rather
+  than guessed — expect those two bins to stay quiet under live HTTP traffic. That's an honest limitation of
+  reusing a packet-trained model on HTTP-layer signals, not a bug in this page.
+- This only ever watches traffic to **this app's own backend** — never anything external.
 """)
-
-live_col1, live_col2, live_col3, live_col4 = st.columns([2, 1, 1, 1])
-with live_col1:
-    feed_limit = st.slider("Entries to show", 5, 50, 15, key="live_feed_limit")
-with live_col2:
-    refresh_clicked = st.button("🔄 Refresh Feed", use_container_width=True)
-with live_col3:
-    burst_clicked = st.button(
-        "💥 Generate Demo Burst", use_container_width=True, disabled=not is_admin(),
-        help="Fires a quick round of real requests at several of this backend's own endpoints — a "
-             "reconnaissance/probe-style pattern — so you can watch the live classification respond. No "
-             "traffic to test with? Start here. Admin only." if is_admin() else
-             "Fires real demo traffic so you have something to watch below. Admin only.",
-    )
-with live_col4:
-    clear_clicked = st.button(
-        "🧹 Clear Feed", use_container_width=True, disabled=not is_admin(),
-        help="Admin only." if not is_admin() else "Wipes the in-memory feed below (does not touch the Alert feed history on the Home page).",
-    )
-
-_DEMO_BURST_ENDPOINTS = [
-    "/network-ids/sample-requests", "/phishing/status", "/phishing/sample-requests",
-    "/malware/status", "/alerts", "/alerts/stats",
-    "/vuln-scanner/targets", "/vuln-scanner/security-headers",
-]
-
-if clear_clicked and is_admin():
-    api_post("/network-ids/live-feed/clear")
-    st.toast("Live feed cleared.", icon="🧹")
-
-if burst_clicked and is_admin():
-    with st.spinner("Firing a quick burst across this backend's own endpoints..."):
-        for ep in _DEMO_BURST_ENDPOINTS:
-            try:
-                api_get(ep)
-            except Exception:
-                pass
-    st.toast("Burst sent — showing fresh classifications below.", icon="💥")
-
-feed_resp = api_get("/network-ids/live-feed", params={"limit": feed_limit})
-if feed_resp.status_code != 200:
-    st.error(f"Could not load the live feed: {feed_resp.text}")
-else:
-    feed = feed_resp.json()
-
-    status_col1, status_col2, status_col3 = st.columns([1, 1, 2])
-    with status_col1:
-        st.metric("Monitor status", "🟢 Live" if feed["monitor_enabled"] else "⏸️ Paused")
-    with status_col2:
-        st.metric("Requests logged", feed["total_logged"])
-    with status_col3:
-        if is_admin():
-            pause_label = "⏸️ Pause Monitor" if feed["monitor_enabled"] else "▶️ Resume Monitor"
-            if st.button(pause_label):
-                api_post("/network-ids/live-feed/toggle", json_body={"enabled": not feed["monitor_enabled"]})
-                st.rerun()
-
-    items = feed["items"]
-    if not items:
-        st.info(
-            "Nothing logged yet — no non-admin visitor has browsed the app this session. "
-            + ("Click **Generate Demo Burst** above, then **Refresh Feed**, to see it in action right now."
-               if is_admin() else "Ask an admin to generate a demo burst, or just browse around the app and click Refresh.")
-        )
-    else:
-        _LABEL_EMOJI = {"normal": "✅ normal", "dos": "🔴 DoS", "probe": "🟠 probe", "r2l": "🟣 R2L", "u2r": "⚫ U2R"}
-
-        st.caption(
-            "🔴🟠🟣⚫ rows below are the ones that look suspicious — everything else is ordinary traffic. "
-            "The left edge of each row is colored the same way."
-        )
-
-        radar_col, table_col = st.columns([1, 3])
-        with radar_col:
-            n_items = len(items)
-            blips = [
-                {
-                    "key": f"{item['ts']}-{item['path']}-{i}",
-                    "recency": (n_items - i) / n_items,
-                    "color": ATTACK_COLORS.get(item["label"], MUTED) if item["label"] else MUTED,
-                    "label": f"{item['method']} {item['path']} — {_LABEL_EMOJI.get(item['label'], 'unclassified')}",
-                }
-                for i, item in enumerate(items)
-            ]
-            radar_sweep(blips, size=200)
-            st.caption(
-                "One dot per logged request, colored by its verdict — a SOC-style glance view. Position on "
-                "the dial is illustrative only, not a real location."
-            )
-
-        with table_col:
-            table_columns = ["Time", "Method", "Path", "Status", "Count (2s)", "Classification", "Confidence"]
-            rows, row_colors = [], []
-            for item in items:
-                rows.append({
-                    "Time": datetime.fromtimestamp(item["ts"]).strftime("%H:%M:%S"),
-                    "Method": item["method"],
-                    "Path": item["path"],
-                    "Status": item["status_code"],
-                    "Count (2s)": item["feature_row"]["count"] if item["feature_row"] else "—",
-                    "Classification": _LABEL_EMOJI.get(item["label"], item["label"] or "…"),
-                    "Confidence": f"{item['confidence']:.0%}" if item["confidence"] is not None else "—",
-                })
-                row_colors.append(
-                    ATTACK_COLORS.get(item["label"]) if item["label"] and item["label"] != "normal" else None
-                )
-            styled_table(table_columns, rows, row_colors)
-
-        flagged = [it for it in items if it["label"] and it["label"] != "normal"]
-        if flagged:
-            st.subheader(f"🔍 Flagged entries — why the model decided this ({len(flagged)})")
-            st.caption(
-                "Each one below didn't look like ordinary traffic. Expand it to see, in order of importance, "
-                "exactly which signals pushed the model's call — the same explainability used in the form above."
-            )
-            for item in flagged:
-                with st.expander(
-                    f"{_LABEL_EMOJI.get(item['label'], item['label'])} — {item['method']} {item['path']} "
-                    f"({item['status_code']}) at {datetime.fromtimestamp(item['ts']).strftime('%H:%M:%S')} "
-                    f"— confidence {item['confidence']:.0%}"
-                ):
-                    _render_shap_chart(item["explanation"], height=220)
-                    st.caption("Feature row computed for this request (pre-encoding):")
-                    st.json(item["feature_row"], expanded=False)
-        st.caption("Non-normal classifications above have been recorded in the unified Alert feed on the Home page.")
