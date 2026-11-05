@@ -11,7 +11,10 @@ import pandas as pd
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, is_admin, require_login
-from theme import SEVERITY, inject_global_styles, intro, translate
+from theme import (
+    ATTACK_COLORS, MUTED, SEVERITY, inject_global_styles, info_cards, intro,
+    packet_flow, radar_sweep, styled_table, translate,
+)
 
 st.set_page_config(page_title="Network IDS — SentinelAI", page_icon="🌐", layout="wide")
 ensure_backend()
@@ -46,6 +49,14 @@ def _render_shap_chart(explanation: list[dict], height: int = 260) -> None:
         legend_title_text="",
     )
     st.plotly_chart(fig, use_container_width=True)
+
+_ATTACK_CARDS = [
+    {"key": "normal", "icon": "✅", "title": "Normal", "desc": "Ordinary traffic", "color": ATTACK_COLORS["normal"]},
+    {"key": "dos", "icon": "🔴", "title": "DoS", "desc": "Flooding to knock it offline", "color": ATTACK_COLORS["dos"]},
+    {"key": "probe", "icon": "🟠", "title": "Probe", "desc": "Scanning for a weak spot", "color": ATTACK_COLORS["probe"]},
+    {"key": "r2l", "icon": "🟣", "title": "R2L", "desc": "Remote break-in attempt", "color": ATTACK_COLORS["r2l"]},
+    {"key": "u2r", "icon": "⚫", "title": "U2R", "desc": "Escalating to admin rights", "color": ATTACK_COLORS["u2r"]},
+]
 
 status = api_get("/network-ids/status").json()
 if not status.get("model_loaded"):
@@ -84,6 +95,8 @@ with st.form("ids_form"):
 
     submitted = st.form_submit_button("🔍 Classify Traffic", type="primary", use_container_width=True)
 
+highlight_key = None
+
 if submitted:
     payload = {
         "protocol_type": protocol_type, "service": service, "flag": flag,
@@ -98,6 +111,7 @@ if submitted:
         st.error(f"Prediction failed: {resp.text}")
     else:
         result = resp.json()
+        highlight_key = result["label"].lower()
         if result["is_malicious"]:
             st.error(f"🚨 **{result['label'].upper()}** detected — confidence {result['confidence']:.0%}")
             translate(
@@ -113,6 +127,12 @@ if submitted:
                 f"reads as ordinary traffic, and the model is {result['confidence']:.0%} confident in that call."
             )
 
+        packet_flow(
+            ATTACK_COLORS.get(highlight_key, SEVERITY["Medium"]),
+            verdict_label=result["label"].upper(),
+            source_label="Connection",
+        )
+
         st.subheader("Why the model decided this (SHAP)")
         st.caption(
             "Each bar is one signal the model weighed. Longer blue bars pushed it toward **normal**; longer "
@@ -120,6 +140,9 @@ if submitted:
         )
         _render_shap_chart(result["explanation"], height=300)
         st.caption("This event has been recorded in the unified Alert feed on the Home page.")
+
+st.caption("What each category actually means:" + ("" if highlight_key is None else " (your result is lit up below)"))
+info_cards(_ATTACK_CARDS, highlight_key=highlight_key)
 
 st.divider()
 
@@ -222,20 +245,46 @@ else:
     else:
         _LABEL_EMOJI = {"normal": "✅ normal", "dos": "🔴 DoS", "probe": "🟠 probe", "r2l": "🟣 R2L", "u2r": "⚫ U2R"}
 
-        st.caption("🔴🟠🟣⚫ rows below are the ones that look suspicious — everything else is ordinary traffic.")
+        st.caption(
+            "🔴🟠🟣⚫ rows below are the ones that look suspicious — everything else is ordinary traffic. "
+            "The left edge of each row is colored the same way."
+        )
 
-        rows = []
-        for item in items:
-            rows.append({
-                "Time": datetime.fromtimestamp(item["ts"]).strftime("%H:%M:%S"),
-                "Method": item["method"],
-                "Path": item["path"],
-                "Status": item["status_code"],
-                "Count (2s)": item["feature_row"]["count"] if item["feature_row"] else "—",
-                "Classification": _LABEL_EMOJI.get(item["label"], item["label"] or "…"),
-                "Confidence": f"{item['confidence']:.0%}" if item["confidence"] is not None else "—",
-            })
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        radar_col, table_col = st.columns([1, 3])
+        with radar_col:
+            n_items = len(items)
+            blips = [
+                {
+                    "key": f"{item['ts']}-{item['path']}-{i}",
+                    "recency": (n_items - i) / n_items,
+                    "color": ATTACK_COLORS.get(item["label"], MUTED) if item["label"] else MUTED,
+                    "label": f"{item['method']} {item['path']} — {_LABEL_EMOJI.get(item['label'], 'unclassified')}",
+                }
+                for i, item in enumerate(items)
+            ]
+            radar_sweep(blips, size=200)
+            st.caption(
+                "One dot per logged request, colored by its verdict — a SOC-style glance view. Position on "
+                "the dial is illustrative only, not a real location."
+            )
+
+        with table_col:
+            table_columns = ["Time", "Method", "Path", "Status", "Count (2s)", "Classification", "Confidence"]
+            rows, row_colors = [], []
+            for item in items:
+                rows.append({
+                    "Time": datetime.fromtimestamp(item["ts"]).strftime("%H:%M:%S"),
+                    "Method": item["method"],
+                    "Path": item["path"],
+                    "Status": item["status_code"],
+                    "Count (2s)": item["feature_row"]["count"] if item["feature_row"] else "—",
+                    "Classification": _LABEL_EMOJI.get(item["label"], item["label"] or "…"),
+                    "Confidence": f"{item['confidence']:.0%}" if item["confidence"] is not None else "—",
+                })
+                row_colors.append(
+                    ATTACK_COLORS.get(item["label"]) if item["label"] and item["label"] != "normal" else None
+                )
+            styled_table(table_columns, rows, row_colors)
 
         flagged = [it for it in items if it["label"] and it["label"] != "normal"]
         if flagged:
