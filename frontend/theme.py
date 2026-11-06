@@ -36,8 +36,11 @@ an actual visitor opening the public link never sees it.)
 """
 import hashlib
 import math
+from pathlib import Path
 
 import streamlit as st
+
+_ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 # ---------------------------------------------------------------------
 # Canonical color tokens — the single source of truth. Do not define a
@@ -123,6 +126,127 @@ def hex_to_rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
+# ---------------------------------------------------------------------
+# The brand mark — one faceted-diamond glyph (same silhouette the splash
+# screen draws), reused everywhere the app needs a logo instead of the
+# generic 🛡️ emoji: the login screen, the dashboard header, and the
+# sidebar's own logo slot (via `sidebar_brand()` below). One function
+# generates it at any size, so every appearance is pixel-consistent.
+# ---------------------------------------------------------------------
+def _gem_facets_svg(id_prefix: str, cx: float, cy: float, r: float) -> str:
+    top, right, bottom, left = (cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)
+
+    def pt(p):
+        return f"{p[0]:.1f},{p[1]:.1f}"
+
+    return f"""<defs>
+      <linearGradient id="{id_prefix}TL" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="{GOLD_BRIGHT}"/><stop offset="100%" stop-color="{GOLD}"/>
+      </linearGradient>
+      <linearGradient id="{id_prefix}TR" x1="1" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="{GOLD}"/><stop offset="100%" stop-color="{GOLD_DEEP}"/>
+      </linearGradient>
+      <linearGradient id="{id_prefix}BR" x1="1" y1="1" x2="0" y2="0">
+        <stop offset="0%" stop-color="{GOLD_DEEP}"/><stop offset="100%" stop-color="#6B5418"/>
+      </linearGradient>
+      <linearGradient id="{id_prefix}BL" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0%" stop-color="{GOLD}"/><stop offset="100%" stop-color="{GOLD_DEEP}"/>
+      </linearGradient>
+    </defs>
+    <polygon points="{pt(top)} {pt(right)} {cx:.1f},{cy:.1f}" fill="url(#{id_prefix}TR)"/>
+    <polygon points="{pt(top)} {pt(left)} {cx:.1f},{cy:.1f}" fill="url(#{id_prefix}TL)"/>
+    <polygon points="{pt(right)} {pt(bottom)} {cx:.1f},{cy:.1f}" fill="url(#{id_prefix}BR)"/>
+    <polygon points="{pt(left)} {pt(bottom)} {cx:.1f},{cy:.1f}" fill="url(#{id_prefix}BL)"/>
+    <polygon points="{pt(top)} {pt(right)} {pt(bottom)} {pt(left)}"
+             fill="none" stroke="{GOLD_BRIGHT}" stroke-opacity="0.6" stroke-width="1"/>"""
+
+
+def gem_svg(size: int = 48, id_prefix: str = "gem") -> str:
+    """Inline SVG markup for the faceted-diamond brand mark at any pixel
+    size. `id_prefix` must be unique per call site on a given page (SVG
+    gradient ids must not collide if two gems render in the same DOM —
+    e.g. the splash gem and the login-screen gem can both be present)."""
+    r = size * 0.42
+    c = size / 2
+    inner = _gem_facets_svg(id_prefix, c, c, r)
+    return f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">{inner}</svg>'
+
+
+def _write_logo_assets():
+    """Regenerates the two static logo files `sidebar_brand()` points
+    `st.logo()` at. Written from the same facet geometry as `gem_svg()`
+    (not hand-duplicated SVG) so the sidebar logo and every inline gem
+    stay visually identical, and so a future palette tweak here updates
+    the logo files automatically on next server start. SVG text uses a
+    system serif, not the Cormorant Garamond web font: `st.logo()` renders
+    the file inside an isolated <img>, which does not fetch external
+    @import stylesheets, so a web-font reference would silently fall back
+    anyway — Georgia renders identically every time instead."""
+    _ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    icon_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">'
+        + _gem_facets_svg("logoIcon", 24, 24, 20)
+        + "</svg>"
+    )
+    (_ASSET_DIR / "logo_icon.svg").write_text(icon_svg, encoding="utf-8")
+
+    full_svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 232 48">
+      <defs>
+        <linearGradient id="logoFullText" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="{GOLD_BRIGHT}"/><stop offset="100%" stop-color="{GOLD}"/>
+        </linearGradient>
+      </defs>
+      {_gem_facets_svg("logoFull", 24, 24, 19)}
+      <text x="56" y="32" font-family="Georgia, 'Times New Roman', serif" font-size="27"
+            font-weight="700" letter-spacing="0.3" fill="url(#logoFullText)">SentinelAI</text>
+    </svg>"""
+    (_ASSET_DIR / "logo_full.svg").write_text(full_svg, encoding="utf-8")
+
+
+_write_logo_assets()
+
+
+def sidebar_brand():
+    """Puts the faceted-diamond + "SentinelAI" lockup in the sidebar's
+    native logo slot, which Streamlit renders *above* the page nav list —
+    the one piece of sidebar real estate no amount of CSS can reach any
+    other way. Call once per page, right after `inject_global_styles()`."""
+    st.logo(
+        str(_ASSET_DIR / "logo_full.svg"),
+        icon_image=str(_ASSET_DIR / "logo_icon.svg"),
+        size="large",
+    )
+
+
+def page_header(icon: str, eyebrow: str, title: str, subtitle: str, color: str = None):
+    """The one page-header component every page should call instead of
+    hand-rolling `st.title()` + `st.caption()`: a small color-badged icon,
+    an uppercase gem-colored eyebrow label, the serif title in that same
+    gem's foil gradient (so each module's header visually announces its
+    identity before you've read a word), a one-line subtitle, and a
+    thin gradient rule to close the block."""
+    color = color or GOLD
+    deep = GOLD_DEEP if color == GOLD else f"{color}"
+    st.markdown(
+        f"""
+        <div class="sai-page-header">
+          <div class="sai-page-header-row">
+            <div class="sai-page-header-badge" style="background:radial-gradient(circle at 32% 28%, {color}40, {OBSIDIAN_1} 75%);
+                 border:1px solid {color}66; box-shadow:0 0 18px -4px {color}88;">{icon}</div>
+            <div>
+              <div class="sai-eyebrow" style="color:{color};">{eyebrow}</div>
+              <h1 class="sai-page-title" style="background:linear-gradient(120deg, {INK} 0%, {color} 55%, {deep} 100%);
+                  -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;">{title}</h1>
+            </div>
+          </div>
+          <div class="sai-page-sub">{subtitle}</div>
+          <div class="sai-page-rule" style="background:linear-gradient(90deg, {color}99, {color}22 35%, transparent 75%);"></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def inject_global_styles():
     st.markdown(
         f"""
@@ -162,16 +286,92 @@ def inject_global_styles():
             background: linear-gradient(180deg, {OBSIDIAN_1} 0%, {OBSIDIAN_0} 100%) !important;
             border-right: 1px solid {GOLD_LINE};
         }}
-        [data-testid="stSidebarNav"] a {{
-            border-radius: 10px !important; margin: 1px 6px !important;
-            transition: background 0.25s ease, color 0.25s ease;
+
+        /* ---- sidebar logo slot (st.logo(), via sidebar_brand()) — the
+           only part of the sidebar that renders ABOVE the page nav, so
+           this is where the brand lockup lives instead of a bare nav
+           list with no identity at the top. ---- */
+        [data-testid="stSidebarHeader"] {{
+            padding: 20px 20px 16px 20px !important;
+            border-bottom: 1px solid {GOLD_LINE};
+            margin-bottom: 6px;
         }}
-        [data-testid="stSidebarNav"] a:hover {{
-            background: {GOLD}14 !important;
+        [data-testid="stSidebarHeader"] img {{
+            filter: drop-shadow(0 0 10px {GOLD}55);
         }}
-        [data-testid="stSidebarNav"] a[aria-current="page"] {{
+        [data-testid="stSidebarCollapseButton"] button {{
+            color: {MUTED} !important;
+        }}
+
+        /* ---- sidebar nav: a small gem-colored dot per module (matching
+           that module's identity color everywhere else in the app) plus
+           a proper gold "you are here" treatment. Streamlit 1.41 doesn't
+           mark the current page with aria-current — it only varies the
+           link's own emotion-cache class — so the active rule below is
+           pinned to that exact generated class name; it degrades to just
+           losing the extra emphasis (never to a broken look) if a future
+           Streamlit upgrade changes it. The href-suffix selectors are
+           version-proof since they just key off the page's own slug. ---- */
+        [data-testid="stSidebarNavLink"] {{
+            border-radius: 10px !important; margin: 2px 8px !important;
+            padding: 10px 14px !important;
+            transition: background 0.2s ease, padding-left 0.2s ease;
+        }}
+        [data-testid="stSidebarNavLink"] span {{ font-weight: 500 !important; }}
+        [data-testid="stSidebarNavLink"]:hover {{
+            background: {GOLD}14 !important; padding-left: 18px !important;
+        }}
+        [data-testid="stSidebarNavLink"]::before {{
+            content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+            margin-right: 11px; vertical-align: middle; background: {MUTED_DIM};
+        }}
+        a[data-testid="stSidebarNavLink"][href$="/Home"]::before {{
+            background: {GOLD}; box-shadow: 0 0 6px 1px {GOLD}99;
+        }}
+        a[data-testid="stSidebarNavLink"][href$="/Network_IDS"]::before {{
+            background: {SAPPHIRE}; box-shadow: 0 0 6px 1px {SAPPHIRE}99;
+        }}
+        a[data-testid="stSidebarNavLink"][href$="/Phishing_Detector"]::before {{
+            background: {TOPAZ}; box-shadow: 0 0 6px 1px {TOPAZ}99;
+        }}
+        a[data-testid="stSidebarNavLink"][href$="/Malware_Scanner"]::before {{
+            background: {RUBY}; box-shadow: 0 0 6px 1px {RUBY}99;
+        }}
+        a[data-testid="stSidebarNavLink"][href$="/Vulnerability_Scanner"]::before {{
+            background: {AMETHYST}; box-shadow: 0 0 6px 1px {AMETHYST}99;
+        }}
+        a[data-testid="stSidebarNavLink"][href$="/Secure_Vault"]::before {{
+            background: {EMERALD}; box-shadow: 0 0 6px 1px {EMERALD}99;
+        }}
+        [data-testid="stSidebarNav"] a[aria-current="page"],
+        .st-emotion-cache-zp31zu {{
             background: linear-gradient(90deg, {GOLD}22, transparent) !important;
-            box-shadow: inset 3px 0 0 0 {GOLD};
+            box-shadow: inset 3px 0 0 0 {GOLD} !important;
+            font-weight: 700 !important;
+        }}
+        [data-testid="stSidebarNav"] a[aria-current="page"] span,
+        .st-emotion-cache-zp31zu span {{ color: {GOLD_BRIGHT} !important; }}
+
+        /* ---- page header (page_header()) ---- */
+        .sai-page-header {{ margin: 2px 0 22px 0; }}
+        .sai-page-header-row {{ display: flex; align-items: center; gap: 16px; }}
+        .sai-page-header-badge {{
+            flex: none; width: 52px; height: 52px; border-radius: 16px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.5rem;
+        }}
+        .sai-eyebrow {{
+            font-size: 0.74rem; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
+            margin-bottom: 2px;
+        }}
+        .sai-page-title {{
+            font-size: 2.1rem !important; margin: 0 !important; line-height: 1.15 !important;
+        }}
+        .sai-page-sub {{
+            color: {MUTED}; font-size: 0.95rem; margin: 10px 0 0 68px; max-width: 760px;
+        }}
+        .sai-page-rule {{
+            height: 1px; margin: 16px 0 0 0; border-radius: 1px;
         }}
 
         /* ---- explainer / "what this does" box — glass card ---- */

@@ -21,15 +21,19 @@ import streamlit.components.v1 as components
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, require_login
-from theme import inject_global_styles
+from theme import TOPAZ, inject_global_styles, page_header, sidebar_brand
 
 st.set_page_config(page_title="Phishing Detector — SentinelAI", page_icon="🎣", layout="wide")
 ensure_backend()
 inject_global_styles()
+sidebar_brand()
 require_login()
 
-st.title("🎣 Phishing & Malicious URL Detector")
-st.caption("Paste a link, watch it get X-rayed — no network calls, just the shape of the URL itself.")
+page_header(
+    "🎣", "EMAIL & URL SECURITY", "Phishing & Malicious URL Detector",
+    "Paste a link, watch it get X-rayed — no network calls, just the shape of the URL itself.",
+    TOPAZ,
+)
 
 status = api_get("/phishing/status").json()
 if not status.get("model_loaded"):

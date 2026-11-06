@@ -32,12 +32,13 @@ import streamlit as st
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, is_admin, is_logged_in, login, logout, register
-from theme import inject_global_styles, luxury_splash
+from theme import gem_svg, inject_global_styles, luxury_splash, page_header, sidebar_brand
 
 st.set_page_config(page_title="SentinelAI", page_icon="🛡️", layout="wide")
 ensure_backend()
 inject_global_styles()
 luxury_splash()
+sidebar_brand()
 
 # ---------------------------------------------------------------------------
 # Shared design tokens — one identity color per module, reused everywhere a
@@ -93,7 +94,7 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
 
 def login_screen():
     st.markdown(
-        """<div style="text-align:center;padding:48px 0 14px 0;">
+        f"""<div style="text-align:center;padding:48px 0 14px 0;">
 <div style="position:relative;width:92px;height:92px;margin:0 auto;">
 <div style="position:absolute;inset:0;border-radius:50%;border:1px solid #D4AF3755;
 animation:sv-livepulse 2.4s ease-in-out infinite;"></div>
@@ -101,7 +102,7 @@ animation:sv-livepulse 2.4s ease-in-out infinite;"></div>
 <div style="position:absolute;inset:18px;border-radius:50%;
 background:radial-gradient(circle at 35% 30%, #F2D88933, #0F1115 72%);
 border:1px solid #D4AF3766;box-shadow:0 0 28px -4px #D4AF3755, inset 0 0 14px #D4AF3722;
-display:flex;align-items:center;justify-content:center;font-size:1.9rem;">🛡️</div>
+display:flex;align-items:center;justify-content:center;">{gem_svg(40, "loginGem")}</div>
 </div>
 <h1 class="sv-display" style="font-size:2.5rem;margin:14px 0 0 0;">SentinelAI</h1>
 <div style="color:#A39A87;font-size:0.92rem;letter-spacing:0.14em;text-transform:uppercase;margin-top:2px;">
@@ -417,12 +418,11 @@ def _top_risk_signals(df: pd.DataFrame, n: int = 5):
 
 
 def overview_screen():
-    st.markdown(
-        """<div style="padding:4px 0 10px 0;display:flex;align-items:baseline;gap:10px;">
-<span style="font-size:1.8rem;filter:drop-shadow(0 0 8px #D4AF3755);">🛡️</span>
-<h1 class="sv-display" style="font-size:2rem;margin:0;">SentinelAI — Security Overview</h1>
-</div>""",
-        unsafe_allow_html=True,
+    page_header(
+        gem_svg(26, "ovwGem"),
+        "COMMAND CENTER",
+        "Security Overview",
+        "Live risk posture across every module — Network IDS, Phishing Detector, Malware Scanner, Vulnerability Scanner, and Secure Vault, in one feed.",
     )
     with st.sidebar:
         st.markdown(

@@ -37,15 +37,19 @@ from cryptography.hazmat.primitives.serialization import (
 
 from _backend_bootstrap import ensure_backend
 from api_client import require_login, BACKEND_URL, _headers
-from theme import inject_global_styles
+from theme import EMERALD, inject_global_styles, page_header, sidebar_brand
 
 st.set_page_config(page_title="Secure Vault — SentinelAI", page_icon="🔐", layout="wide")
 ensure_backend()
 inject_global_styles()
+sidebar_brand()
 require_login()
 
-st.title("🔐 Secure Vault")
-st.caption("AES-256 file encryption, RSA-2048 digital signatures, SHA-256 integrity verification, audit logging.")
+page_header(
+    "🔐", "CRYPTOGRAPHIC VAULT", "Secure Vault",
+    "AES-256 file encryption, RSA-2048 digital signatures, SHA-256 integrity verification, audit logging.",
+    EMERALD,
+)
 
 st.session_state.setdefault("vault_ledger", [])
 st.session_state.setdefault("vault_hero", None)

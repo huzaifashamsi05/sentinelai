@@ -22,15 +22,19 @@ import streamlit.components.v1 as components
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, is_admin, require_login
-from theme import SEVERITY, inject_global_styles
+from theme import SAPPHIRE, SEVERITY, inject_global_styles, page_header, sidebar_brand
 
 st.set_page_config(page_title="Network IDS — SentinelAI", page_icon="🌐", layout="wide")
 ensure_backend()
 require_login()
 inject_global_styles()
+sidebar_brand()
 
-st.title("🌐 Network Intrusion Detection")
-st.caption("Watch it sort, don't read it — real traffic to this app, classified live.")
+page_header(
+    "🌐", "LIVE TRAFFIC ANALYSIS", "Network Intrusion Detection",
+    "Watch it sort, don't read it — real traffic to this app, classified live.",
+    SAPPHIRE,
+)
 
 # Bin identity — deliberately its own small palette (validated as a concept
 # with the user before this build): teal doubles as both "Normal" and the
