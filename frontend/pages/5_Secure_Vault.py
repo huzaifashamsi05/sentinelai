@@ -37,9 +37,11 @@ from cryptography.hazmat.primitives.serialization import (
 
 from _backend_bootstrap import ensure_backend
 from api_client import require_login, BACKEND_URL, _headers
+from theme import inject_global_styles
 
 st.set_page_config(page_title="Secure Vault — SentinelAI", page_icon="🔐", layout="wide")
 ensure_backend()
+inject_global_styles()
 require_login()
 
 st.title("🔐 Secure Vault")
@@ -80,7 +82,7 @@ def _crack_time_estimate(pw: str):
     zxcvbn-style model — just charset size x length, assuming ~10 billion
     guesses/second (a fast offline GPU attack), shown for illustration."""
     if not pw:
-        return "", "", 0.0, "#5f6368"
+        return "", "", 0.0, "#6B6355"
     charset = 0
     if any(c.islower() for c in pw):
         charset += 26
@@ -111,15 +113,15 @@ def _crack_time_estimate(pw: str):
         time_str = "centuries"
 
     if entropy_bits < 28:
-        label, score, color = "Very Weak", 0.15, "#e74c3c"
+        label, score, color = "Very Weak", 0.15, "#C62F42"
     elif entropy_bits < 36:
-        label, score, color = "Weak", 0.35, "#e67e22"
+        label, score, color = "Weak", 0.35, "#C97A2B"
     elif entropy_bits < 60:
-        label, score, color = "Fair", 0.55, "#f1c40f"
+        label, score, color = "Fair", 0.55, "#FFC65C"
     elif entropy_bits < 80:
-        label, score, color = "Strong", 0.8, "#2ecc71"
+        label, score, color = "Strong", 0.8, "#2FE0A8"
     else:
-        label, score, color = "Very Strong", 1.0, "#27ae60"
+        label, score, color = "Very Strong", 1.0, "#1C9A72"
     return label, time_str, score, color
 
 
@@ -145,31 +147,31 @@ def _key_preview(pem: str) -> str:
 
 _HERO_TEMPLATE = r"""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
   *{box-sizing:border-box}
   html,body{margin:0;background:transparent;overflow:hidden;}
-  body{ font-family:'IBM Plex Sans', system-ui, sans-serif; color:#e8edf3; padding:2px; }
-  .mono{ font-family:'IBM Plex Mono', monospace; }
-  .display{ font-family:'Chakra Petch', system-ui, sans-serif; }
+  body{ font-family:'Manrope', system-ui, sans-serif; color:#F4EFE3; padding:2px; }
+  .mono{ font-family:'JetBrains Mono', monospace; }
+  .display{ font-family:'Cormorant Garamond', Georgia, serif; }
 
   .console{
-    background: linear-gradient(180deg, #121822 0%, #0a0e13 120%);
-    border:1px solid #232d3a; border-radius:18px;
+    background: linear-gradient(180deg, #0F1115 0%, #07080B 120%);
+    border:1px solid #2A2418; border-radius:18px;
     padding: 22px clamp(14px, 3vw, 30px) 20px;
     display:flex; gap:26px; align-items:center; position:relative; overflow:hidden;
     flex-wrap:wrap;
   }
   .console::before{
     content:""; position:absolute; inset:0;
-    background: radial-gradient(600px 220px at 88% -15%, color-mix(in srgb, #2dd4c8 10%, transparent), transparent 60%);
+    background: radial-gradient(600px 220px at 88% -15%, color-mix(in srgb, #2FE0A8 10%, transparent), transparent 60%);
     pointer-events:none;
   }
 
   .ring-col{ flex:0 0 150px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; position:relative; }
   .ring-wrap{ position:relative; width:108px; height:108px; }
   .ring-wrap svg{ transform:rotate(-90deg); width:108px; height:108px; }
-  .ring-bg{ fill:none; stroke:#1b222c; stroke-width:6; }
-  .ring-fg{ fill:none; stroke:var(--vc,#2dd4c8); stroke-width:6; stroke-linecap:round;
+  .ring-bg{ fill:none; stroke:#211C12; stroke-width:6; }
+  .ring-fg{ fill:none; stroke:var(--vc,#2FE0A8); stroke-width:6; stroke-linecap:round;
             stroke-dasharray:293; stroke-dashoffset:293; opacity:0;
             transition: stroke-dashoffset 0.8s cubic-bezier(.3,.6,.3,1), opacity 0.3s ease; }
   .stamp{
@@ -179,24 +181,24 @@ _HERO_TEMPLATE = r"""
   }
   .stamp.show{ transform:scale(1); opacity:1; }
   .stamp .word{ font-size:1.0rem; font-weight:700; line-height:1.15; letter-spacing:0.02em; }
-  .placeholder{ color:#4b5768; font-size:0.8rem; text-align:center; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:0 12px; }
+  .placeholder{ color:#6B6355; font-size:0.8rem; text-align:center; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:0 12px; }
 
   .detail{ flex:1 1 280px; min-width:0; display:flex; flex-direction:column; gap:9px; justify-content:center; }
-  .fchip{ display:inline-flex; align-items:center; gap:8px; align-self:flex-start; padding:6px 12px; border-radius:9px; background:#0d1218; border:1px solid #232d3a; font-size:0.78rem; color:#c7d0dc; max-width:100%; }
+  .fchip{ display:inline-flex; align-items:center; gap:8px; align-self:flex-start; padding:6px 12px; border-radius:9px; background:#07080B; border:1px solid #2A2418; font-size:0.78rem; color:#D9D2C0; max-width:100%; }
   .fchip .fname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px; }
-  .fchip .sz{ color:#5a6676; flex-shrink:0; }
-  .hlabel{ font-size:0.66rem; color:#7f8ea0; text-transform:uppercase; letter-spacing:0.05em; }
-  .hval{ font-family:'IBM Plex Mono', monospace; font-size:0.84rem; color:#e8edf3; word-break:break-all; opacity:0; transform:translateY(3px); transition: all 0.5s ease 0.1s; }
+  .fchip .sz{ color:#6B6355; flex-shrink:0; }
+  .hlabel{ font-size:0.66rem; color:#A39A87; text-transform:uppercase; letter-spacing:0.05em; }
+  .hval{ font-family:'JetBrains Mono', monospace; font-size:0.84rem; color:#F4EFE3; word-break:break-all; opacity:0; transform:translateY(3px); transition: all 0.5s ease 0.1s; }
   .hval.show{ opacity:1; transform:translateY(0); }
-  .extra{ font-size:0.78rem; color:#9aa6b4; }
+  .extra{ font-size:0.78rem; color:#A39A87; }
 
   .keyrow{ display:flex; gap:10px; flex-wrap:wrap; }
-  .keycard{ flex:1 1 150px; border-radius:11px; border:1px solid #232d3a; background:#0d1218; padding:9px 13px; opacity:0; transform:translateY(6px); transition: all 0.4s cubic-bezier(.3,1.2,.4,1); }
+  .keycard{ flex:1 1 150px; border-radius:11px; border:1px solid #2A2418; background:#07080B; padding:9px 13px; opacity:0; transform:translateY(6px); transition: all 0.4s cubic-bezier(.3,1.2,.4,1); }
   .keycard.show{ opacity:1; transform:translateY(0); }
   .keycard .klabel{ font-size:0.66rem; text-transform:uppercase; letter-spacing:0.05em; font-weight:600; }
-  .keycard .kprev{ font-family:'IBM Plex Mono', monospace; font-size:0.72rem; color:#8793a3; margin-top:4px; word-break:break-all; }
-  .keycard.pub{ border-color:#2dd4c855; } .keycard.pub .klabel{ color:#2dd4c8; }
-  .keycard.priv{ border-color:#ffb23855; } .keycard.priv .klabel{ color:#ffb238; }
+  .keycard .kprev{ font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:#A39A87; margin-top:4px; word-break:break-all; }
+  .keycard.pub{ border-color:#2FE0A855; } .keycard.pub .klabel{ color:#2FE0A8; }
+  .keycard.priv{ border-color:#FFA94055; } .keycard.priv .klabel{ color:#FFA940; }
 
   /* Stays a row at every width (never stacks) — this iframe has a fixed
      pixel height with no auto-resize, so a column stack here would clip
@@ -237,7 +239,7 @@ _HERO_TEMPLATE = r"""
   if (!data.hasResult) { return; }
 
   placeholder.style.display = 'none';
-  const color = data.color === 'bad' ? '#ff5d63' : (data.color === 'info' ? '#4da3ff' : '#2dd4c8');
+  const color = data.color === 'bad' ? '#E0344F' : (data.color === 'info' ? '#4F9BFF' : '#2FE0A8');
   ring.style.setProperty('--vc', color);
   ring.style.stroke = color;
   stampWord.style.color = color;
@@ -321,12 +323,12 @@ with tab_encrypt:
         _label, _ctime, _score, _color = _crack_time_estimate(password)
         st.markdown(
             f"""<div style="margin:2px 0 10px 0;">
-<div style="background:#2a2d35;border-radius:6px;height:8px;overflow:hidden;">
+<div style="background:#2A2418;border-radius:6px;height:8px;overflow:hidden;">
 <div style="width:{_score * 100:.0f}%;background:{_color};height:100%;transition:width .2s ease;"></div>
 </div>
 <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:0.82rem;">
 <span style="color:{_color};font-weight:600;">{_label}</span>
-<span style="color:#9aa0a6;">Est. crack time: {_ctime}</span>
+<span style="color:#A39A87;">Est. crack time: {_ctime}</span>
 </div>
 </div>""",
             unsafe_allow_html=True,
@@ -699,17 +701,17 @@ with tab_verify:
         # not user input, so they don't need the same treatment.
         safe_file_name = html.escape(cert["file_name"])
         st.markdown(
-            f"""<div style="border:1px solid #2ecc71;border-radius:10px;padding:18px 22px;background:linear-gradient(135deg,#0e2518,#12161c);">
+            f"""<div style="border:1px solid #2FE0A8;border-radius:10px;padding:18px 22px;background:linear-gradient(135deg,#0C2A20,#0F1115);">
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
 <span style="font-size:1.5rem;">🛡️</span>
-<span style="font-size:1.08rem;font-weight:700;color:#2ecc71;">Trust Certificate — Signature Verified</span>
+<span style="font-size:1.08rem;font-weight:700;color:#2FE0A8;">Trust Certificate — Signature Verified</span>
 </div>
-<table style="width:100%;font-size:0.86rem;color:#d7dadd;border-collapse:collapse;">
-<tr><td style="padding:4px 0;color:#9aa0a6;width:180px;vertical-align:top;">File</td><td>{safe_file_name}</td></tr>
-<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">File SHA-256</td><td style="font-family:monospace;word-break:break-all;">{cert['file_sha256']}</td></tr>
-<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Signature algorithm</td><td>RSA-2048 + PSS + SHA-256</td></tr>
-<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Key fingerprint (SPKI SHA-256)</td><td style="font-family:monospace;word-break:break-all;">{cert['key_fp']}</td></tr>
-<tr><td style="padding:4px 0;color:#9aa0a6;vertical-align:top;">Verified at</td><td>{cert['verified_at']}</td></tr>
+<table style="width:100%;font-size:0.86rem;color:#D9D2C0;border-collapse:collapse;">
+<tr><td style="padding:4px 0;color:#A39A87;width:180px;vertical-align:top;">File</td><td>{safe_file_name}</td></tr>
+<tr><td style="padding:4px 0;color:#A39A87;vertical-align:top;">File SHA-256</td><td style="font-family:monospace;word-break:break-all;">{cert['file_sha256']}</td></tr>
+<tr><td style="padding:4px 0;color:#A39A87;vertical-align:top;">Signature algorithm</td><td>RSA-2048 + PSS + SHA-256</td></tr>
+<tr><td style="padding:4px 0;color:#A39A87;vertical-align:top;">Key fingerprint (SPKI SHA-256)</td><td style="font-family:monospace;word-break:break-all;">{cert['key_fp']}</td></tr>
+<tr><td style="padding:4px 0;color:#A39A87;vertical-align:top;">Verified at</td><td>{cert['verified_at']}</td></tr>
 </table>
 </div>""",
             unsafe_allow_html=True,

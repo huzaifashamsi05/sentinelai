@@ -38,7 +38,7 @@ st.caption("Watch it sort, don't read it — real traffic to this app, classifie
 # distinct hue. Kept local to this page rather than theme.py's ATTACK_COLORS
 # because the rest of the platform hasn't moved to this token set yet.
 _CATS = ["normal", "dos", "probe", "r2l", "u2r"]
-_BIN_COLORS = {"normal": "#2dd4c8", "dos": "#ff5d63", "probe": "#ffb238", "r2l": "#b48bff", "u2r": "#64748b"}
+_BIN_COLORS = {"normal": "#2FE0A8", "dos": "#E0344F", "probe": "#FFA940", "r2l": "#B37FEF", "u2r": "#6B6355"}
 _BIN_LABELS = {"normal": "Normal", "dos": "DoS", "probe": "Probe", "r2l": "R2L", "u2r": "U2R"}
 _LABEL_WORD = {"normal": "normal", "dos": "DoS", "probe": "probe", "r2l": "R2L", "u2r": "U2R"}
 
@@ -52,7 +52,7 @@ def _render_shap_chart(explanation: list[dict], height: int = 220) -> None:
     )
     fig.update_layout(
         height=height, yaxis_title="", xaxis_title="SHAP impact", margin=dict(t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#ECEDF2"},
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#F4EFE3"},
         legend_title_text="",
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -60,37 +60,38 @@ def _render_shap_chart(explanation: list[dict], height: int = 220) -> None:
 
 _CONSOLE_TEMPLATE = r"""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
   *{box-sizing:border-box}
   html,body{margin:0;background:transparent;overflow:hidden;}
   body{
-    font-family:'IBM Plex Sans', system-ui, sans-serif; color:#e8edf3;
+    font-family:'Manrope', system-ui, sans-serif; color:#F4EFE3;
     padding:2px;
   }
-  .mono{ font-family:'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+  .mono{ font-family:'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+  .display{ font-family:'Cormorant Garamond', Georgia, serif; }
 
   .console{
-    background: linear-gradient(180deg, #121822 0%, #0a0e13 120%);
-    border:1px solid #232d3a; border-radius:18px;
+    background: linear-gradient(180deg, #0F1115 0%, #07080B 120%);
+    border:1px solid #2A2418; border-radius:18px;
     padding: 22px clamp(14px, 3vw, 30px) 20px;
     display:flex; flex-direction:column; gap:18px;
     position:relative; overflow:hidden;
   }
   .console::before{
     content:""; position:absolute; inset:0;
-    background: radial-gradient(600px 220px at 12% -15%, color-mix(in srgb, #2dd4c8 10%, transparent), transparent 60%);
+    background: radial-gradient(600px 220px at 12% -15%, color-mix(in srgb, #2FE0A8 10%, transparent), transparent 60%);
     pointer-events:none;
   }
   .console-head{ display:flex; align-items:center; gap:8px; position:relative; }
-  .status-dot{ width:8px; height:8px; border-radius:50%; background:#2dd4c8; flex-shrink:0; }
+  .status-dot{ width:8px; height:8px; border-radius:50%; background:#2FE0A8; flex-shrink:0; }
   .status-dot.live{ animation: dot-pulse 1.8s ease-in-out infinite; }
-  .status-dot.paused{ background:#4b5563; }
-  @keyframes dot-pulse{ 0%,100%{ box-shadow:0 0 0 0 #2dd4c866 } 50%{ box-shadow:0 0 0 6px #2dd4c800 } }
-  .console-head span{ font-size:0.74rem; color:#7f8ea0; letter-spacing:0.01em; }
+  .status-dot.paused{ background:#6B6355; }
+  @keyframes dot-pulse{ 0%,100%{ box-shadow:0 0 0 0 #2FE0A866 } 50%{ box-shadow:0 0 0 6px #2FE0A800 } }
+  .console-head span{ font-size:0.74rem; color:#A39A87; letter-spacing:0.01em; }
 
   .lane{
     position:relative; height:128px; border-radius:14px;
-    background:#0a0e13; border:1px solid #232d3a; overflow:visible;
+    background:#07080B; border:1px solid #2A2418; overflow:visible;
   }
   .source{
     position:absolute; left:16px; top:50%; translate:0 -50%;
@@ -98,32 +99,32 @@ _CONSOLE_TEMPLATE = r"""
   }
   .source .dot{
     width:32px; height:32px; border-radius:50%;
-    background: radial-gradient(circle at 35% 30%, #30404f, #171f2b);
-    border:1px solid #232d3a; display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(circle at 35% 30%, #3A3020, #161920);
+    border:1px solid #2A2418; display:flex; align-items:center; justify-content:center;
     animation: breathe 2.4s ease-in-out infinite;
   }
-  .source svg{ width:15px; height:15px; stroke:#2dd4c8; }
-  .source span{ font-size:0.66rem; color:#7f8ea0; }
-  @keyframes breathe{ 0%,100%{ box-shadow:0 0 0 0 #2dd4c822 } 50%{ box-shadow:0 0 0 7px #2dd4c800 } }
+  .source svg{ width:15px; height:15px; stroke:#2FE0A8; }
+  .source span{ font-size:0.66rem; color:#A39A87; }
+  @keyframes breathe{ 0%,100%{ box-shadow:0 0 0 0 #2FE0A822 } 50%{ box-shadow:0 0 0 7px #2FE0A800 } }
 
   .gate{
     position:absolute; left:46%; top:8%; bottom:8%; width:3px;
-    background: linear-gradient(180deg, transparent, #232d3a 20%, #232d3a 80%, transparent);
+    background: linear-gradient(180deg, transparent, #2A2418 20%, #2A2418 80%, transparent);
     border-radius:2px; transition:opacity 0.4s ease;
   }
   .gate::after{
     content:""; position:absolute; left:50%; top:0; width:16px; height:100%;
-    translate:-50% 0; background: linear-gradient(180deg, transparent, #2dd4c84d, transparent);
+    translate:-50% 0; background: linear-gradient(180deg, transparent, #2FE0A84D, transparent);
     animation: scan 2.6s linear infinite;
   }
   .gate.paused::after{ animation-play-state: paused; opacity:0.25; }
   @keyframes scan{ 0%{ transform:translateY(-110%) translateX(-50%) } 100%{ transform:translateY(110%) translateX(-50%) } }
   .gate.flash::after{ animation-duration:0.45s; }
-  .gate .glabel{ position:absolute; bottom:-20px; left:50%; translate:-50% 0; font-size:0.64rem; color:#7f8ea0; white-space:nowrap; }
+  .gate .glabel{ position:absolute; bottom:-20px; left:50%; translate:-50% 0; font-size:0.64rem; color:#A39A87; white-space:nowrap; }
 
   .particle{
     position:absolute; top:50%; left:2%; width:9px; height:9px; border-radius:50%;
-    translate:-50% -50%; background:#7f8ea0; box-shadow:0 0 0 0 transparent;
+    translate:-50% -50%; background:#A39A87; box-shadow:0 0 0 0 transparent;
     transition: left 0.8s cubic-bezier(.4,.1,.3,1), top 0.8s cubic-bezier(.4,.1,.3,1),
                 background-color 0.22s linear, box-shadow 0.22s linear, scale 0.55s ease;
     z-index:3;
@@ -137,14 +138,14 @@ _CONSOLE_TEMPLATE = r"""
 
   .bins{ display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:clamp(6px,1.4vw,10px); }
   .bin{
-    background:#121822; border:1px solid #232d3a; border-radius:12px;
+    background:#0F1115; border:1px solid #2A2418; border-radius:12px;
     padding:9px 6px 10px; display:flex; flex-direction:column; align-items:center; gap:6px;
     position:relative; min-width:0; transition: transform 0.25s ease;
   }
   .bin.landed{ transform: translateY(-2px); }
   .bin .well{
-    width:100%; height:52px; border-radius:8px; background:#0a0e13;
-    border:1px solid #232d3a; position:relative; overflow:hidden;
+    width:100%; height:52px; border-radius:8px; background:#07080B;
+    border:1px solid #2A2418; position:relative; overflow:hidden;
   }
   .bin .fill{
     position:absolute; left:0; right:0; bottom:0; height:4%;
@@ -153,13 +154,13 @@ _CONSOLE_TEMPLATE = r"""
   }
   .bin .well::after{
     content:""; position:absolute; inset:0; border-radius:8px;
-    box-shadow: inset 0 1px 0 0 #ffffff14; pointer-events:none;
+    box-shadow: inset 0 1px 0 0 #F4EFE314; pointer-events:none;
   }
   .bin.landed .well{ box-shadow: inset 0 0 0 1px var(--c), 0 0 14px -3px var(--c); }
   .bin .count{ font-size:clamp(0.95rem,2.4vw,1.2rem); font-weight:600; line-height:1; color:var(--c); }
-  .bin .label{ font-size:clamp(0.62rem,1.6vw,0.72rem); color:#7f8ea0; font-weight:500; white-space:nowrap; }
+  .bin .label{ font-size:clamp(0.62rem,1.6vw,0.72rem); color:#A39A87; font-weight:500; white-space:nowrap; }
 
-  .caption{ color:#7f8ea0; font-size:0.78rem; }
+  .caption{ color:#A39A87; font-size:0.78rem; }
 
   @media (prefers-reduced-motion: reduce){
     .particle{ transition-duration:0.01s !important; }
@@ -252,7 +253,7 @@ _CONSOLE_TEMPLATE = r"""
           gate.classList.add('flash');
           setTimeout(()=>gate.classList.remove('flash'), 450);
         }
-        const c = payload.colors[key] || '#7f8ea0';
+        const c = payload.colors[key] || '#A39A87';
         p.style.background = c;
         p.style.boxShadow = '0 0 10px 1px ' + c;
         p.style.left = binCenterX(key) + '%';

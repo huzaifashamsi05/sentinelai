@@ -21,9 +21,11 @@ import streamlit.components.v1 as components
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, require_login
+from theme import inject_global_styles
 
 st.set_page_config(page_title="Phishing Detector — SentinelAI", page_icon="🎣", layout="wide")
 ensure_backend()
+inject_global_styles()
 require_login()
 
 st.title("🎣 Phishing & Malicious URL Detector")
@@ -91,11 +93,11 @@ def _render_shap_chart(explanation: list[dict]) -> None:
     exp_df["direction"] = exp_df["impact"].apply(lambda x: "Pushes toward phishing" if x > 0 else "Pushes toward benign")
     fig = px.bar(
         exp_df.sort_values("impact"), x="impact", y="feature", orientation="h",
-        color="direction", color_discrete_map={"Pushes toward phishing": "#ff5d63", "Pushes toward benign": "#2dd4c8"},
+        color="direction", color_discrete_map={"Pushes toward phishing": "#E0344F", "Pushes toward benign": "#2FE0A8"},
     )
     fig.update_layout(
         height=260, yaxis_title="", xaxis_title="SHAP impact", margin=dict(t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#ECEDF2"},
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#F4EFE3"},
         legend_title_text="",
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -103,23 +105,23 @@ def _render_shap_chart(explanation: list[dict]) -> None:
 
 _SCAN_TEMPLATE = r"""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
   *{box-sizing:border-box}
   html,body{margin:0;background:transparent;overflow:hidden;}
-  body{ font-family:'IBM Plex Sans', system-ui, sans-serif; color:#e8edf3; padding:2px; }
-  .mono{ font-family:'IBM Plex Mono', monospace; }
-  .display{ font-family:'Chakra Petch', system-ui, sans-serif; }
+  body{ font-family:'Manrope', system-ui, sans-serif; color:#F4EFE3; padding:2px; }
+  .mono{ font-family:'JetBrains Mono', monospace; }
+  .display{ font-family:'Cormorant Garamond', Georgia, serif; }
 
   .console{
-    background: linear-gradient(180deg, #121822 0%, #0a0e13 120%);
-    border:1px solid #232d3a; border-radius:18px;
+    background: linear-gradient(180deg, #0F1115 0%, #07080B 120%);
+    border:1px solid #2A2418; border-radius:18px;
     padding: 24px clamp(14px, 3vw, 30px) 22px;
     display:flex; gap:24px; align-items:stretch; position:relative; overflow:hidden;
     flex-wrap:wrap;
   }
   .console::before{
     content:""; position:absolute; inset:0;
-    background: radial-gradient(600px 220px at 12% -15%, color-mix(in srgb, #2dd4c8 10%, transparent), transparent 60%);
+    background: radial-gradient(600px 220px at 12% -15%, color-mix(in srgb, #2FE0A8 10%, transparent), transparent 60%);
     pointer-events:none;
   }
 
@@ -127,37 +129,37 @@ _SCAN_TEMPLATE = r"""
 
   .url-row{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
   .seg{
-    border-radius:9px; padding:7px 11px; font-size:0.82rem; border:1px solid #232d3a;
-    background:#121822; color:#7f8ea0; transition: all 0.35s ease; min-width:0;
+    border-radius:9px; padding:7px 11px; font-size:0.82rem; border:1px solid #2A2418;
+    background:#0F1115; color:#A39A87; transition: all 0.35s ease; min-width:0;
   }
-  .seg .k{ font-size:0.62rem; text-transform:lowercase; color:#5a6676; display:block; margin-bottom:1px; }
-  .seg .v{ font-family:'IBM Plex Mono', monospace; color:#c7d0dc; word-break:break-all; }
+  .seg .k{ font-size:0.62rem; text-transform:lowercase; color:#6B6355; display:block; margin-bottom:1px; }
+  .seg .v{ font-family:'JetBrains Mono', monospace; color:#D9D2C0; word-break:break-all; }
   .seg.flagged{
-    border-color:#ff5d63; background:color-mix(in srgb, #ff5d63 12%, #121822);
-    box-shadow:0 0 14px -4px #ff5d6388;
+    border-color:#E0344F; background:color-mix(in srgb, #E0344F 12%, #0F1115);
+    box-shadow:0 0 14px -4px #E0344F88;
   }
-  .seg.flagged .v{ color:#ffd3d5; }
-  .seg.clean{ border-color:#2dd4c855; }
+  .seg.flagged .v{ color:#E8B4BE; }
+  .seg.clean{ border-color:#2FE0A855; }
   .seg.scheme{ flex:0 0 auto; opacity:0.75; }
   .seg.path{ flex:1 1 160px; }
 
   .pills{ display:flex; flex-wrap:wrap; gap:7px; }
   .pill{
     display:flex; align-items:center; gap:6px; padding:5px 10px 5px 8px; border-radius:999px;
-    border:1px solid #232d3a; background:#121822; font-size:0.72rem; color:#4b5768;
+    border:1px solid #2A2418; background:#0F1115; font-size:0.72rem; color:#6B6355;
     transition: all 0.3s ease; cursor:default;
   }
-  .pill .dot{ width:7px; height:7px; border-radius:50%; background:#2d3744; flex-shrink:0; transition: all 0.3s ease; }
-  .pill.on{ border-color:#ff5d63; color:#ffb3b6; background:color-mix(in srgb, #ff5d63 10%, #121822); }
-  .pill.on .dot{ background:#ff5d63; box-shadow:0 0 6px 1px #ff5d6399; animation: pill-pulse 1.6s ease-in-out infinite; }
+  .pill .dot{ width:7px; height:7px; border-radius:50%; background:#3A3020; flex-shrink:0; transition: all 0.3s ease; }
+  .pill.on{ border-color:#E0344F; color:#E8B4BE; background:color-mix(in srgb, #E0344F 10%, #0F1115); }
+  .pill.on .dot{ background:#E0344F; box-shadow:0 0 6px 1px #E0344F99; animation: pill-pulse 1.6s ease-in-out infinite; }
   @keyframes pill-pulse{ 0%,100%{ opacity:1 } 50%{ opacity:0.55 } }
 
   .imp-row{ display:flex; align-items:center; gap:10px; font-size:0.78rem; }
-  .imp-chip{ border-radius:9px; padding:6px 11px; border:1px solid #232d3a; background:#121822; }
-  .imp-chip .k{ font-size:0.62rem; color:#5a6676; display:block; }
-  .imp-chip.bad{ border-color:#ffb238; background:color-mix(in srgb, #ffb238 10%, #121822); color:#ffe0a3; }
-  .imp-chip.real{ color:#c7d0dc; }
-  .imp-arrow{ color:#ffb238; font-size:1rem; }
+  .imp-chip{ border-radius:9px; padding:6px 11px; border:1px solid #2A2418; background:#0F1115; }
+  .imp-chip .k{ font-size:0.62rem; color:#6B6355; display:block; }
+  .imp-chip.bad{ border-color:#FFA940; background:color-mix(in srgb, #FFA940 10%, #0F1115); color:#F0D9A6; }
+  .imp-chip.real{ color:#D9D2C0; }
+  .imp-arrow{ color:#FFA940; font-size:1rem; }
 
   .right{
     flex:0 0 150px; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -165,8 +167,8 @@ _SCAN_TEMPLATE = r"""
   }
   .ring-wrap{ position:relative; width:112px; height:112px; }
   .ring-wrap svg{ transform:rotate(-90deg); width:112px; height:112px; }
-  .ring-bg{ fill:none; stroke:#1b222c; stroke-width:6; }
-  .ring-fg{ fill:none; stroke:var(--vc,#2dd4c8); stroke-width:6; stroke-linecap:round;
+  .ring-bg{ fill:none; stroke:#211C12; stroke-width:6; }
+  .ring-fg{ fill:none; stroke:var(--vc,#2FE0A8); stroke-width:6; stroke-linecap:round;
             stroke-dasharray:301; stroke-dashoffset:301; opacity:0;
             transition: stroke-dashoffset 0.9s cubic-bezier(.3,.6,.3,1), opacity 0.3s ease; }
   .stamp{
@@ -176,10 +178,10 @@ _SCAN_TEMPLATE = r"""
   .stamp.show{ transform:scale(1); opacity:1; }
   .stamp svg{ width:30px; height:30px; }
   .stamp .word{ font-size:0.74rem; font-weight:600; letter-spacing:0.02em; }
-  .conf{ font-size:0.72rem; color:#7f8ea0; }
-  .conf .n{ font-family:'IBM Plex Mono', monospace; color:#c7d0dc; font-weight:600; }
+  .conf{ font-size:0.72rem; color:#A39A87; }
+  .conf .n{ font-family:'JetBrains Mono', monospace; color:#D9D2C0; font-weight:600; }
 
-  .placeholder{ color:#4b5768; font-size:0.82rem; text-align:center; }
+  .placeholder{ color:#6B6355; font-size:0.82rem; text-align:center; }
 
   @media (max-width:560px){
     .console{ flex-direction:column; }
@@ -270,7 +272,7 @@ _SCAN_TEMPLATE = r"""
     placeholder.style.display = 'none';
     confLine.style.visibility = 'visible';
     const malicious = data.isMalicious;
-    const color = malicious ? '#ff5d63' : '#2dd4c8';
+    const color = malicious ? '#E0344F' : '#2FE0A8';
     ring.style.setProperty('--vc', color);
     ring.style.stroke = color;
     stampWord.style.color = color;

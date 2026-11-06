@@ -32,9 +32,12 @@ import streamlit as st
 
 from _backend_bootstrap import ensure_backend
 from api_client import api_get, api_post, is_admin, is_logged_in, login, logout, register
+from theme import inject_global_styles, luxury_splash
 
 st.set_page_config(page_title="SentinelAI", page_icon="🛡️", layout="wide")
 ensure_backend()
+inject_global_styles()
+luxury_splash()
 
 # ---------------------------------------------------------------------------
 # Shared design tokens — one identity color per module, reused everywhere a
@@ -43,7 +46,7 @@ ensure_backend()
 # already shipped on the Vulnerability Scanner page so a "High" reads as
 # the same red everywhere in the platform.
 # ---------------------------------------------------------------------------
-SEVERITY_COLOR = {"High": "#ff5d63", "Medium": "#ffb238", "Low": "#4da3ff"}
+SEVERITY_COLOR = {"High": "#E0344F", "Medium": "#FFA940", "Low": "#4F9BFF"}
 MODULE_ICON = {
     "Network IDS": "🌐",
     "Phishing Detector": "🎣",
@@ -52,11 +55,11 @@ MODULE_ICON = {
     "Secure Vault": "🔐",
 }
 MODULE_COLOR = {
-    "Network IDS": "#4da3ff",
-    "Phishing Detector": "#ffb238",
-    "Malware Scanner": "#ff5d63",
-    "Vulnerability Scanner": "#9b59b6",
-    "Secure Vault": "#2dd4c8",
+    "Network IDS": "#4F9BFF",
+    "Phishing Detector": "#FFA940",
+    "Malware Scanner": "#E0344F",
+    "Vulnerability Scanner": "#9B5FE0",
+    "Secure Vault": "#2FE0A8",
 }
 MODULE_ORDER = list(MODULE_ICON.keys())
 RISK_WEIGHT = {"High": 10, "Medium": 5, "Low": 2}
@@ -74,9 +77,8 @@ _ALERT_COLUMNS = ["created_at", "module", "title", "severity", "is_malicious", "
 
 _FONTS_CSS = """
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-  .sv-display{ font-family:'Chakra Petch', system-ui, sans-serif; }
-  .sv-mono{ font-family:'IBM Plex Mono', monospace; }
+  .sv-display{ font-family:'Cormorant Garamond', Georgia, serif; }
+  .sv-mono{ font-family:'JetBrains Mono', monospace; }
   @keyframes sv-livepulse{ 0%,100%{ opacity:1; } 50%{ opacity:0.35; } }
 </style>
 """
@@ -91,15 +93,19 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
 
 def login_screen():
     st.markdown(
-        """<div style="text-align:center;padding:40px 0 10px 0;">
-<div style="position:relative;width:76px;height:76px;margin:0 auto;">
-<div style="position:absolute;inset:0;border-radius:50%;border:1px solid #2dd4c855;
+        """<div style="text-align:center;padding:48px 0 14px 0;">
+<div style="position:relative;width:92px;height:92px;margin:0 auto;">
+<div style="position:absolute;inset:0;border-radius:50%;border:1px solid #D4AF3755;
 animation:sv-livepulse 2.4s ease-in-out infinite;"></div>
-<div style="position:absolute;inset:10px;border-radius:50%;border:1px solid #2dd4c833;"></div>
-<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:2.4rem;">🛡️</div>
+<div style="position:absolute;inset:9px;border-radius:50%;border:1px solid #D4AF3733;"></div>
+<div style="position:absolute;inset:18px;border-radius:50%;
+background:radial-gradient(circle at 35% 30%, #F2D88933, #0F1115 72%);
+border:1px solid #D4AF3766;box-shadow:0 0 28px -4px #D4AF3755, inset 0 0 14px #D4AF3722;
+display:flex;align-items:center;justify-content:center;font-size:1.9rem;">🛡️</div>
 </div>
-<div class="sv-display" style="font-size:2.1rem;font-weight:800;color:#e8eaed;margin-top:10px;">SentinelAI</div>
-<div style="color:#9aa0a6;font-size:1rem;margin-top:4px;">AI-Powered Security Operations Platform</div>
+<h1 class="sv-display" style="font-size:2.5rem;margin:14px 0 0 0;">SentinelAI</h1>
+<div style="color:#A39A87;font-size:0.92rem;letter-spacing:0.14em;text-transform:uppercase;margin-top:2px;">
+AI-Powered Security Operations Platform</div>
 </div>""",
         unsafe_allow_html=True,
     )
@@ -107,8 +113,8 @@ animation:sv-livepulse 2.4s ease-in-out infinite;"></div>
     col_l, col_mid, col_r = st.columns([1, 1.3, 1])
     with col_mid:
         st.markdown(
-            """<div style="border:1px solid #2a2d35;border-radius:14px;padding:22px 26px 10px 26px;
-background:linear-gradient(160deg,#171a21,#12161c);">""",
+            """<div style="border:1px solid #D4AF3740;border-radius:18px;padding:24px 28px 10px 28px;
+background:linear-gradient(160deg,#161920,#0F1115 70%);box-shadow:0 24px 70px -24px #000000cc;">""",
             unsafe_allow_html=True,
         )
         tab_login, tab_register = st.tabs(["Log in", "Register"])
@@ -117,7 +123,7 @@ background:linear-gradient(160deg,#171a21,#12161c);">""",
             with st.form("login_form"):
                 username = st.text_input("Username")
                 password = st.text_input("Password", type="password")
-                submitted = st.form_submit_button("Log in", use_container_width=True)
+                submitted = st.form_submit_button("Log in", use_container_width=True, type="primary")
             if submitted:
                 ok, msg = login(username, password)
                 if ok:
@@ -131,7 +137,7 @@ background:linear-gradient(160deg,#171a21,#12161c);">""",
                 new_username = st.text_input("Choose a username")
                 new_password = st.text_input("Choose a password (min 8 chars)", type="password")
                 role = st.selectbox("Role", ["analyst", "admin"])
-                reg_submitted = st.form_submit_button("Create account", use_container_width=True)
+                reg_submitted = st.form_submit_button("Create account", use_container_width=True, type="primary")
             if reg_submitted:
                 ok, msg = register(new_username, new_password, role)
                 if ok:
@@ -168,10 +174,10 @@ def _relative_time(ts: pd.Timestamp) -> str:
 def _metric_card(icon: str, label: str, value, color: str):
     st.markdown(
         f"""<div style="border:1px solid {color}40;border-radius:14px;padding:16px 18px;
-background:linear-gradient(135deg,{_hex_to_rgba(color, 0.10)},#12161c 70%);height:100%;">
+background:linear-gradient(135deg,{_hex_to_rgba(color, 0.10)},#0F1115 70%);height:100%;">
 <div style="font-size:1.4rem;">{icon}</div>
 <div class="sv-display" style="font-size:1.8rem;font-weight:700;color:{color};margin-top:6px;">{value}</div>
-<div style="font-size:0.8rem;color:#9aa0a6;margin-top:2px;">{label}</div>
+<div style="font-size:0.8rem;color:#A39A87;margin-top:2px;">{label}</div>
 </div>""",
         unsafe_allow_html=True,
     )
@@ -204,14 +210,14 @@ def _compute_risk_index(df: pd.DataFrame) -> tuple[int, dict]:
 
 def _risk_band(score: int) -> tuple[str, str]:
     if score >= 90:
-        return "#2dd4c8", "Excellent"
+        return "#2FE0A8", "Excellent"
     if score >= 75:
-        return "#8ec63f", "Good"
+        return "#7DCB6B", "Good"
     if score >= 50:
-        return "#ffb238", "Fair"
+        return "#FFA940", "Fair"
     if score >= 25:
-        return "#ff8a3d", "At Risk"
-    return "#ff5d63", "Critical"
+        return "#E8863D", "At Risk"
+    return "#E0344F", "Critical"
 
 
 # Ring geometry for the Platform Risk Index hero — same proportions as the
@@ -234,14 +240,14 @@ def _risk_ring_html(score: int, color: str, label: str) -> str:
 </style>
 <div style="position:relative;width:{size}px;height:{size}px;flex-shrink:0;">
   <svg viewBox="0 0 {size} {size}" style="transform:rotate(-90deg);width:{size}px;height:{size}px;">
-    <circle cx="{c}" cy="{c}" r="{_RING_R}" fill="none" stroke="#1b222c" stroke-width="10"/>
+    <circle cx="{c}" cy="{c}" r="{_RING_R}" fill="none" stroke="#211C12" stroke-width="10"/>
     <circle cx="{c}" cy="{c}" r="{_RING_R}" fill="none" stroke="{color}" stroke-width="10"
             stroke-linecap="round" stroke-dasharray="{_RING_C}" stroke-dashoffset="{_RING_C}"
             style="animation:sv-risk-reveal 1.1s cubic-bezier(.3,.6,.3,1) forwards;"/>
   </svg>
   <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
     <div class="sv-display" style="font-weight:700;font-size:2.5rem;line-height:1;color:{color};">{score}</div>
-    <div style="font-size:0.72rem;letter-spacing:0.05em;text-transform:uppercase;color:#7f8ea0;margin-top:5px;">{label}</div>
+    <div style="font-size:0.72rem;letter-spacing:0.05em;text-transform:uppercase;color:#A39A87;margin-top:5px;">{label}</div>
   </div>
 </div>"""
 
@@ -257,12 +263,12 @@ border:1px solid {SEVERITY_COLOR[s]}55;border-radius:999px;padding:4px 13px;font
     )
     st.markdown(
         f"""<div style="border:1px solid {band_color}40;border-radius:18px;
-padding:28px 30px;background:linear-gradient(135deg,{_hex_to_rgba(band_color, 0.10)},#10141b 65%);
+padding:28px 30px;background:linear-gradient(135deg,{_hex_to_rgba(band_color, 0.10)},#0F1115 65%);
 display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
 {_risk_ring_html(score, band_color, band_label)}
 <div style="flex:1;min-width:240px;">
 <div class="sv-display" style="font-size:1.25rem;font-weight:700;color:{band_color};">{band_label} standing</div>
-<div style="color:#9aa0a6;font-size:0.88rem;margin-top:4px;">Platform risk score — {score} / 100, across every module</div>
+<div style="color:#A39A87;font-size:0.88rem;margin-top:4px;">Platform risk score — {score} / 100, across every module</div>
 <div style="margin-top:16px;">{chips}</div>
 </div>
 </div>""",
@@ -290,7 +296,7 @@ def _sparkline(counts: list[int], color: str, width: int = 74, height: int = 22)
         x = i * bar_w + gap / 2
         w = bar_w - gap
         y = height - h
-        fill = color if cnt > 0 else "#2a2d35"
+        fill = color if cnt > 0 else "#2A2418"
         bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" rx="1.4" fill="{fill}"/>')
     return f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}">{"".join(bars)}</svg>'
 
@@ -311,24 +317,24 @@ def _module_health_strip(df: pd.DataFrame):
             has_high_malicious = (
                 (mod_df["is_malicious"] == True) & (mod_df["severity"] == "High")  # noqa: E712
             ).any()
-            accent = "#ff5d63" if has_high_malicious else (ident if recent else "#6c7580")
+            accent = "#E0344F" if has_high_malicious else (ident if recent else "#6B6355")
             day_counts = mod_df["created_at"].dt.normalize()
             counts = [int((day_counts == d).sum()) for d in day_slots]
         else:
             last_str = "No activity yet"
-            accent = "#3a3f47"
+            accent = "#4A4538"
             counts = [0] * 7
-        spark = _sparkline(counts, accent if total else "#2a2d35")
+        spark = _sparkline(counts, accent if total else "#2A2418")
         with cols[i]:
             st.markdown(
                 f"""<div style="border:1px solid {accent}50;border-radius:14px;padding:14px 12px;
-background:linear-gradient(160deg,{_hex_to_rgba(accent, 0.09)},#12161c 75%);text-align:center;min-height:158px;
+background:linear-gradient(160deg,{_hex_to_rgba(accent, 0.09)},#0F1115 75%);text-align:center;min-height:158px;
 display:flex;flex-direction:column;justify-content:space-between;">
 <div>
 <div style="font-size:1.5rem;">{MODULE_ICON[mod]}</div>
-<div style="font-weight:700;font-size:0.78rem;color:#e8eaed;margin-top:4px;line-height:1.2;">{mod}</div>
+<div style="font-weight:700;font-size:0.78rem;color:#F4EFE3;margin-top:4px;line-height:1.2;">{mod}</div>
 <div class="sv-display" style="font-size:1.4rem;font-weight:700;color:{accent};margin-top:6px;">{total}</div>
-<div style="font-size:0.7rem;color:#9aa0a6;">events · {last_str}</div>
+<div style="font-size:0.7rem;color:#A39A87;">events · {last_str}</div>
 </div>
 <div style="display:flex;justify-content:center;margin-top:8px;">{spark}</div>
 </div>""",
@@ -365,7 +371,7 @@ def _activity_timeline(df: pd.DataFrame):
     )
     fig.update_layout(
         height=300, legend_title_text="", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis_title="", yaxis_title="Events", font={"family": "IBM Plex Sans, sans-serif", "color": "#c7d0dc"},
+        xaxis_title="", yaxis_title="Events", font={"family": "Manrope, sans-serif", "color": "#D9D2C0"},
         barmode="stack", margin=dict(l=10, r=10, t=10, b=10),
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -373,25 +379,25 @@ def _activity_timeline(df: pd.DataFrame):
 
 def _alert_card(row: pd.Series) -> str:
     severity = row["severity"]
-    color = SEVERITY_COLOR.get(severity, "#9aa0a6")
+    color = SEVERITY_COLOR.get(severity, "#A39A87")
     conf_str = f"{row['confidence'] * 100:.0f}%" if pd.notna(row["confidence"]) else "—"
     icon = MODULE_ICON.get(row["module"], "🛡️")
     flag = (
-        '<span style="color:#ff5d63;font-size:0.72rem;">⚠ malicious</span>'
+        '<span style="color:#E0344F;font-size:0.72rem;">⚠ malicious</span>'
         if row.get("is_malicious")
-        else '<span style="color:#2dd4c8;font-size:0.72rem;">✓ clear</span>'
+        else '<span style="color:#2FE0A8;font-size:0.72rem;">✓ clear</span>'
     )
     return f"""<div style="display:flex;align-items:center;gap:14px;border:1px solid {color}55;
 border-left:3px solid {color};border-radius:10px;padding:11px 16px;
-background:linear-gradient(135deg,{_hex_to_rgba(color, 0.08)},#12161c 80%);margin-bottom:8px;">
+background:linear-gradient(135deg,{_hex_to_rgba(color, 0.08)},#0F1115 80%);margin-bottom:8px;">
 <div style="font-size:1.25rem;">{icon}</div>
 <div style="flex:1;min-width:0;">
-<div style="font-weight:700;color:#e8eaed;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{row['title']}</div>
-<div style="font-size:0.76rem;color:#9aa0a6;margin-top:2px;">{row['module']} · {_relative_time(row['created_at'])} · {flag}</div>
+<div style="font-weight:700;color:#F4EFE3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{row['title']}</div>
+<div style="font-size:0.76rem;color:#A39A87;margin-top:2px;">{row['module']} · {_relative_time(row['created_at'])} · {flag}</div>
 </div>
 <div style="text-align:right;flex-shrink:0;">
 <span style="background:{color}22;color:{color};border:1px solid {color}55;border-radius:999px;padding:3px 10px;font-size:0.76rem;">{severity}</span>
-<div style="font-size:0.74rem;color:#9aa0a6;margin-top:4px;">{conf_str} confidence</div>
+<div style="font-size:0.74rem;color:#A39A87;margin-top:4px;">{conf_str} confidence</div>
 </div>
 </div>"""
 
@@ -412,18 +418,19 @@ def _top_risk_signals(df: pd.DataFrame, n: int = 5):
 
 def overview_screen():
     st.markdown(
-        """<div style="padding:4px 0 10px 0;">
-<span style="font-size:2rem;">🛡️</span>
-<span class="sv-display" style="font-size:1.9rem;font-weight:800;color:#e8eaed;"> SentinelAI — Security Overview</span>
+        """<div style="padding:4px 0 10px 0;display:flex;align-items:baseline;gap:10px;">
+<span style="font-size:1.8rem;filter:drop-shadow(0 0 8px #D4AF3755);">🛡️</span>
+<h1 class="sv-display" style="font-size:2rem;margin:0;">SentinelAI — Security Overview</h1>
 </div>""",
         unsafe_allow_html=True,
     )
     with st.sidebar:
         st.markdown(
-            f"""<div style="border:1px solid #2a2d35;border-radius:10px;padding:12px 14px;background:#171a21;">
-<div style="font-size:0.78rem;color:#9aa0a6;">LOGGED IN AS</div>
-<div style="font-weight:700;color:#e8eaed;font-size:1rem;">{st.session_state.get('username')}</div>
-<div style="font-size:0.78rem;color:#9aa0a6;margin-top:4px;">Role: {st.session_state.get('role')}</div>
+            f"""<div style="border:1px solid #D4AF3740;border-radius:12px;padding:12px 14px;
+background:linear-gradient(160deg,#161920,#0F1115);">
+<div style="font-size:0.72rem;color:#A39A87;letter-spacing:0.08em;">LOGGED IN AS</div>
+<div style="font-weight:700;color:#F4EFE3;font-size:1rem;">{st.session_state.get('username')}</div>
+<div style="font-size:0.78rem;color:#A39A87;margin-top:4px;">Role: {st.session_state.get('role')}</div>
 </div>""",
             unsafe_allow_html=True,
         )
@@ -453,20 +460,20 @@ def overview_screen():
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        _metric_card("📊", "Total Events", stats.get("total_events", 0), "#4da3ff")
+        _metric_card("📊", "Total Events", stats.get("total_events", 0), "#4F9BFF")
     with col2:
-        _metric_card("🚨", "Malicious / High-Risk", stats.get("malicious_events", 0), "#ff5d63")
+        _metric_card("🚨", "Malicious / High-Risk", stats.get("malicious_events", 0), "#E0344F")
     with col3:
-        _metric_card("🧩", "Modules Reporting", len(stats.get("by_module", {})), "#2dd4c8")
+        _metric_card("🧩", "Modules Reporting", len(stats.get("by_module", {})), "#2FE0A8")
     with col4:
         high_count = stats.get("by_severity", {}).get("High", 0)
-        _metric_card("⚠️", "High-Severity Alerts", high_count, "#ffb238")
+        _metric_card("⚠️", "High-Severity Alerts", high_count, "#FFA940")
 
     st.markdown(
         f"""<div style="display:flex;align-items:center;gap:8px;padding:10px 2px 0 2px;">
-<span style="width:8px;height:8px;border-radius:50%;background:#2dd4c8;box-shadow:0 0 6px 2px #2dd4c899;
+<span style="width:8px;height:8px;border-radius:50%;background:#2FE0A8;box-shadow:0 0 6px 2px #2FE0A899;
 display:inline-block;animation:sv-livepulse 1.8s ease-in-out infinite;"></span>
-<span style="font-size:0.8rem;color:#9aa0a6;">{len(stats.get('by_module', {}))} of 5 modules reporting · dashboard live</span>
+<span style="font-size:0.8rem;color:#A39A87;">{len(stats.get('by_module', {}))} of 5 modules reporting · dashboard live</span>
 </div>""",
         unsafe_allow_html=True,
     )
@@ -487,7 +494,7 @@ display:inline-block;animation:sv-livepulse 1.8s ease-in-out infinite;"></span>
             fig = px.bar(mdf, x="Module", y="Events", color="Module", color_discrete_map=MODULE_COLOR)
             fig.update_layout(
                 showlegend=False, height=320, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font={"family": "IBM Plex Sans, sans-serif", "color": "#c7d0dc"},
+                font={"family": "Manrope, sans-serif", "color": "#D9D2C0"},
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -504,7 +511,7 @@ display:inline-block;animation:sv-livepulse 1.8s ease-in-out infinite;"></span>
             )
             fig.update_layout(
                 height=320, paper_bgcolor="rgba(0,0,0,0)",
-                font={"family": "IBM Plex Sans, sans-serif", "color": "#c7d0dc"},
+                font={"family": "Manrope, sans-serif", "color": "#D9D2C0"},
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -559,7 +566,7 @@ display:inline-block;animation:sv-livepulse 1.8s ease-in-out infinite;"></span>
 
         with st.expander("📊 Raw data & full export"):
             def highlight_severity(row):
-                color = SEVERITY_COLOR.get(row["Severity"], "#FFFFFF")
+                color = SEVERITY_COLOR.get(row["Severity"], "#F4EFE3")
                 return [f"background-color: {color}22"] * len(row)
 
             st.dataframe(
@@ -572,9 +579,9 @@ display:inline-block;animation:sv-livepulse 1.8s ease-in-out infinite;"></span>
     st.divider()
     st.subheader("📄 Generate Report")
     st.markdown(
-        """<div style="border:1px solid #2a2d35;border-radius:14px;padding:16px 20px;
-background:linear-gradient(135deg,#4da3ff14,#12161c 75%);">
-<div style="color:#9aa0a6;font-size:0.86rem;">One-click executive summary PDF of recent events, with SHAP explanations for every flagged item.</div>
+        """<div style="border:1px solid #2A2418;border-radius:14px;padding:16px 20px;
+background:linear-gradient(135deg,#4F9BFF14,#0F1115 75%);">
+<div style="color:#A39A87;font-size:0.86rem;">One-click executive summary PDF of recent events, with SHAP explanations for every flagged item.</div>
 </div>""",
         unsafe_allow_html=True,
     )
