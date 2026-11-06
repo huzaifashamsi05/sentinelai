@@ -19,6 +19,29 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+def _format_error_detail(detail) -> str:
+    """FastAPI's `detail` is a plain string for most errors, but a list of
+    Pydantic validation-error dicts for a 422 (e.g. a field that's too
+    short) — e.g. [{"loc": ["body", "username"], "msg": "String should
+    have at least 3 characters", ...}]. Left alone, that list's raw
+    Python repr lands on screen verbatim via st.error(); this turns
+    either shape into one clean, human-readable line instead."""
+    if isinstance(detail, str):
+        return detail
+    if isinstance(detail, list):
+        parts = []
+        for item in detail:
+            if isinstance(item, dict):
+                loc = item.get("loc", [])
+                field = str(loc[-1]) if loc else "value"
+                msg = item.get("msg", "invalid value")
+                parts.append(f"{field}: {msg}")
+            else:
+                parts.append(str(item))
+        return "; ".join(parts) if parts else "The server rejected that request."
+    return str(detail)
+
+
 def api_get(path: str, params: dict | None = None):
     r = requests.get(f"{BACKEND_URL}{API_PREFIX}{path}", headers=_headers(), params=params, timeout=15)
     return r
@@ -46,7 +69,7 @@ def login(username: str, password: str) -> tuple[bool, str]:
             detail = r.json().get("detail", r.text)
         except Exception:
             detail = r.text
-        return False, detail
+        return False, _format_error_detail(detail)
 
     body = r.json()
     st.session_state["token"] = body["access_token"]
@@ -70,7 +93,7 @@ def register(username: str, password: str, role: str = "analyst") -> tuple[bool,
             detail = r.json().get("detail", r.text)
         except Exception:
             detail = r.text
-        return False, detail
+        return False, _format_error_detail(detail)
     return True, "ok"
 
 

@@ -126,25 +126,36 @@ background:linear-gradient(160deg,#161920,#0F1115 70%);box-shadow:0 24px 70px -2
                 password = st.text_input("Password", type="password")
                 submitted = st.form_submit_button("Log in", use_container_width=True, type="primary")
             if submitted:
-                ok, msg = login(username, password)
-                if ok:
-                    st.success(f"Welcome, {username}.")
-                    st.rerun()
+                if not username or not password:
+                    st.warning("Enter both a username and password.")
                 else:
-                    st.error(msg)
+                    ok, msg = login(username, password)
+                    if ok:
+                        st.success(f"Welcome, {username}.")
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
         with tab_register:
             with st.form("register_form"):
-                new_username = st.text_input("Choose a username")
+                new_username = st.text_input("Choose a username (min 3 chars)")
                 new_password = st.text_input("Choose a password (min 8 chars)", type="password")
                 role = st.selectbox("Role", ["analyst", "admin"])
                 reg_submitted = st.form_submit_button("Create account", use_container_width=True, type="primary")
             if reg_submitted:
-                ok, msg = register(new_username, new_password, role)
-                if ok:
-                    st.success("Account created — switch to the Log in tab.")
+                # Checked client-side first so an empty/too-short submit
+                # shows one clean line instantly instead of a round trip
+                # to the backend's 422 validation error.
+                if len(new_username.strip()) < 3:
+                    st.warning("Username must be at least 3 characters.")
+                elif len(new_password) < 8:
+                    st.warning("Password must be at least 8 characters.")
                 else:
-                    st.error(msg)
+                    ok, msg = register(new_username, new_password, role)
+                    if ok:
+                        st.success("Account created — switch to the Log in tab.")
+                    else:
+                        st.error(msg)
         st.markdown("</div>", unsafe_allow_html=True)
 
         pills = "".join(
