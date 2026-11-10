@@ -6,7 +6,7 @@ localhost/127.0.0.1, or explicitly present in `authorized_scan_targets`
 (added by an Admin who has confirmed ownership/authorization). Every other
 host is refused with a 403 before any request is sent. See docs/ETHICS.md.
 """
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -59,6 +59,38 @@ def _is_authorized(db: Session, host: str) -> bool:
     if hostname in settings.DEFAULT_AUTHORIZED_SCAN_TARGETS:
         return True
     return db.query(AuthorizedScanTarget).filter(AuthorizedScanTarget.host == host).first() is not None
+
+
+MAX_SCAN_REDIRECTS = 5
+
+
+def _authorized_get(db: Session, url: str, timeout: int = 10) -> requests.Response:
+    """GET a URL, following redirects by hand and re-checking the
+    authorized-targets gate at every hop.
+
+    requests' own allow_redirects=True follows a redirect chain silently —
+    an authorized host could 302 somewhere nobody approved, and the scanner
+    would happily fetch it. That defeats the whole point of the
+    authorized-targets-only safety gate, so every hop (including the
+    first) is re-validated before it is fetched.
+    """
+    current_url = url
+    for _ in range(MAX_SCAN_REDIRECTS + 1):
+        parsed = urlparse(current_url)
+        if not _is_authorized(db, parsed.netloc):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Redirected to '{parsed.netloc}', which is not an authorized scan target. "
+                    "This scanner re-checks authorization at every redirect hop."
+                ),
+            )
+        resp = requests.get(current_url, timeout=timeout, allow_redirects=False)
+        if resp.is_redirect and resp.headers.get("Location"):
+            current_url = urljoin(current_url, resp.headers["Location"])
+            continue
+        return resp
+    raise HTTPException(status_code=502, detail="Too many redirects while scanning target.")
 
 
 @router.get("/targets")
@@ -123,7 +155,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db), user=Depends(get_c
         )
 
     try:
-        resp = requests.get(payload.url, timeout=10, allow_redirects=True)
+        resp = _authorized_get(db, payload.url, timeout=10)
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Could not reach target: {e}")
 

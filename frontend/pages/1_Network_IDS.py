@@ -440,5 +440,11 @@ with st.expander("🔬 For the technically curious — what \"live\" really mean
   compromised-host indicators) an HTTP request can never honestly provide, so they're left at zero rather
   than guessed — expect those two bins to stay quiet under live HTTP traffic. That's an honest limitation of
   reusing a packet-trained model on HTTP-layer signals, not a bug in this page.
+- **Expect most of this app's own traffic to land as "probe," not "normal."** NSL-KDD's "probe" class is
+  largely short, low-byte connections with few packets — which is structurally what a JSON API call looks
+  like (a small request, a small response), regardless of intent. "Normal" in the training data skews toward
+  longer, higher-byte-count connections. So watching this dashboard's own clicks is a legitimate, honest
+  demonstration of the model running on real traffic — it's just not evidence of anything suspicious when
+  most of it reads as "probe" with borderline confidence; that's the feature space talking, not a detection.
 - This only ever watches traffic to **this app's own backend** — never anything external.
 """)

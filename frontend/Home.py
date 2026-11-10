@@ -140,7 +140,6 @@ background:linear-gradient(160deg,#161920,#0F1115 70%);box-shadow:0 24px 70px -2
             with st.form("register_form"):
                 new_username = st.text_input("Choose a username (min 3 chars)")
                 new_password = st.text_input("Choose a password (min 8 chars)", type="password")
-                role = st.selectbox("Role", ["analyst", "admin"])
                 reg_submitted = st.form_submit_button("Create account", use_container_width=True, type="primary")
             if reg_submitted:
                 # Checked client-side first so an empty/too-short submit
@@ -151,7 +150,7 @@ background:linear-gradient(160deg,#161920,#0F1115 70%);box-shadow:0 24px 70px -2
                 elif len(new_password) < 8:
                     st.warning("Password must be at least 8 characters.")
                 else:
-                    ok, msg = register(new_username, new_password, role)
+                    ok, msg = register(new_username, new_password)
                     if ok:
                         st.success("Account created — switch to the Log in tab.")
                     else:

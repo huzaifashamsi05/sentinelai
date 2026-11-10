@@ -9,9 +9,11 @@ from app.db.models import UserRole, Severity, ModuleName
 
 # ---------- Auth ----------
 class UserCreate(BaseModel):
+    # No `role` field on purpose: self-registration must never let the
+    # client choose its own privilege level. register() always creates
+    # Analyst accounts; Admin exists only via the startup seed (main.py).
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=8)
-    role: UserRole = UserRole.analyst
 
 
 class UserOut(BaseModel):

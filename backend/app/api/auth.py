@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.core.security import hash_password, verify_password, create_access_token
 from app.db.database import get_db
-from app.db.models import User, AuditLog
+from app.db.models import User, UserRole, AuditLog
 from app.schemas import UserCreate, UserOut, Token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -40,10 +40,14 @@ def _log(db: Session, username: str, action: str, detail: str = ""):
 def register(payload: UserCreate, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == payload.username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
+    # Self-registration is always Analyst — never trust a client-supplied
+    # role. Admin exists only via the startup seed (main.py's
+    # seed_default_users); promoting someone to Admin is an out-of-band,
+    # database-level action, not something the public /register form can do.
     user = User(
         username=payload.username,
         hashed_password=hash_password(payload.password),
-        role=payload.role,
+        role=UserRole.analyst,
     )
     db.add(user)
     db.commit()

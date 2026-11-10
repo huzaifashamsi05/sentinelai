@@ -78,11 +78,13 @@ def login(username: str, password: str) -> tuple[bool, str]:
     return True, "ok"
 
 
-def register(username: str, password: str, role: str = "analyst") -> tuple[bool, str]:
+def register(username: str, password: str) -> tuple[bool, str]:
     try:
         r = requests.post(
             f"{BACKEND_URL}{API_PREFIX}/auth/register",
-            json={"username": username, "password": password, "role": role},
+            # No role field — self-registration is always Analyst, enforced
+            # server-side regardless of what a client sends.
+            json={"username": username, "password": password},
             timeout=15,
         )
     except requests.RequestException as e:
