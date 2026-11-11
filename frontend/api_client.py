@@ -6,6 +6,7 @@ renders what the backend returns (matches the architecture diagram:
 Dashboard -> Backend -> modules).
 """
 import os
+import uuid
 
 import requests
 import streamlit as st
@@ -17,6 +18,44 @@ API_PREFIX = "/api/v1"
 def _headers() -> dict:
     token = st.session_state.get("token")
     return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _visitor_identity_header() -> dict:
+    """Best-effort per-visitor identity, sent so the backend's per-
+    (username, ip) login throttle (core/login_throttle.py) can actually
+    tell different visitors apart — see the X-Client-Identity comment on
+    auth.py's _resolve_client_ip() for the full story: on Streamlit
+    Community Cloud this frontend process, not the visitor's browser, is
+    what calls the backend, so without this every visitor's request
+    looks identical (127.0.0.1) to it.
+
+    Preference order:
+    1. The visitor's real IP, if Streamlit's own front door attached an
+       X-Forwarded-For header to this script run (st.context.headers).
+    2. A random ID generated once per browser session and cached in
+       st.session_state — not a real IP, but still a distinct bucket per
+       browser tab, which is what actually matters: one attacker
+       spamming a login shouldn't be able to lock out every other
+       visitor sharing this same deployment.
+
+    Never raises — a header this fails to attach just falls back to the
+    backend's old pre-fix behavior (one shared bucket), never worse.
+    """
+    try:
+        headers = st.context.headers
+        xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
+        if xff:
+            real_ip = xff.split(",")[0].strip()
+            if real_ip:
+                return {"X-Client-Identity": real_ip}
+    except Exception:
+        pass
+
+    session_id = st.session_state.get("_client_session_id")
+    if not session_id:
+        session_id = f"sess-{uuid.uuid4().hex}"
+        st.session_state["_client_session_id"] = session_id
+    return {"X-Client-Identity": session_id}
 
 
 def _format_error_detail(detail) -> str:
@@ -59,6 +98,7 @@ def login(username: str, password: str) -> tuple[bool, str]:
         r = requests.post(
             f"{BACKEND_URL}{API_PREFIX}/auth/login",
             data={"username": username, "password": password},
+            headers=_visitor_identity_header(),
             timeout=15,
         )
     except requests.RequestException as e:

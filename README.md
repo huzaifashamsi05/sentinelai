@@ -72,11 +72,12 @@ first backend startup (see `backend/app/main.py::seed_default_users`):
 | Username | Password | Role |
 |---|---|---|
 | `admin` | from the `ADMIN_PASSWORD` env var — if unset, a random password is generated and printed to the backend's console log on startup | admin |
-| `analyst1` | `AnalystPass123` (fixed, intentionally public — this account can't do anything admin-only) | analyst |
+| `analyst1` | from the `ANALYST_PASSWORD` env var — same treatment as admin: if unset, a random password is generated and printed to the backend's console log on startup | analyst |
 
-Set `ADMIN_PASSWORD` for a stable admin login across restarts, or just
-register your own account from the login screen (self-registration always
-creates an Analyst account; Admin only ever comes from this seed step).
+Set `ADMIN_PASSWORD`/`ANALYST_PASSWORD` for stable logins across restarts,
+or just register your own account from the login screen (self-registration
+always creates an Analyst account; Admin only ever comes from this seed
+step).
 
 ## Retraining a model
 

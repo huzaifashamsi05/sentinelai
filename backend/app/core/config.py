@@ -48,14 +48,22 @@ class Settings:
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 8  # 8 hours
 
-    # Admin account seeded at startup (see main.py::seed_default_users).
-    # No hardcoded fallback password: if ADMIN_PASSWORD isn't set, a random
-    # one is generated fresh and printed to the server log once, rather than
-    # the same published password ("SentinelAI123") living in this public
-    # repo forever. Set ADMIN_PASSWORD in Streamlit Cloud's Secrets panel
-    # for a stable login across reboots.
+    # Both seeded accounts (admin + analyst) work the same way — see
+    # main.py::seed_default_users. Neither has a hardcoded fallback
+    # password: if the secret isn't set, a random one is generated fresh
+    # per-run and printed to the server log, rather than a fixed value
+    # ("SentinelAI123", later "AnalystPass123") living in this public repo
+    # forever. ANALYST_PASSWORD used to be an intentional exception to
+    # this (reasoned as "fine, it's low-privilege") until a follow-up to
+    # the November audit pointed out that's still a secret checked into a
+    # public repo, which this project no longer does for either account —
+    # even though self-registration (POST /auth/register) already lets
+    # anyone create their own Analyst-role account regardless, so this
+    # closes the gap for secret-hygiene/consistency, not because it was
+    # the main way in. Set ADMIN_PASSWORD / ANALYST_PASSWORD in Streamlit
+    # Cloud's Secrets panel for stable logins across reboots.
     ADMIN_PASSWORD: str | None = os.getenv("ADMIN_PASSWORD")
-    ANALYST_PASSWORD: str = os.getenv("ANALYST_PASSWORD", "AnalystPass123")
+    ANALYST_PASSWORD: str | None = os.getenv("ANALYST_PASSWORD")
 
     # CORS — restricted to the deployed frontend origin(s) by default.
     # Comma-separated via ALLOWED_ORIGINS if this is ever split across hosts.

@@ -24,6 +24,42 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # username doesn't exist — see the F-04 comment on login() below for why.
 _DUMMY_HASH = hash_password("this-is-not-a-real-password-used-only-for-constant-time-login")
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_MAX_FORWARDED_IDENTITY_LEN = 128
+
+
+def _resolve_client_ip(request: Request) -> str:
+    """The real per-visitor identity to throttle on — not just request.client.host.
+
+    A follow-up to the November audit caught that F-03's fix didn't
+    actually work in production: the embedded backend (see
+    frontend/_backend_bootstrap.py — uvicorn bound to 127.0.0.1 only,
+    never reachable from outside this container) is called by the
+    Streamlit *frontend process*, not directly by each visitor's browser.
+    Every visitor on Streamlit Community Cloud shares that one frontend
+    process, so request.client.host here is 127.0.0.1 for every single
+    one of them — the "+ip" half of the per-(username, ip) throttle in
+    login_throttle.py silently collapsed back into the exact
+    per-username-only lock F-03 was written to kill.
+
+    Fix: the frontend (frontend/api_client.py) attaches an
+    X-Client-Identity header carrying the best per-visitor signal it has
+    (the visitor's real IP forwarded by Streamlit's own front door when
+    available, else a random ID scoped to that one browser session) and
+    we use THAT as the throttle key instead. We only ever trust this
+    header when the direct TCP connection is loopback — i.e. it can only
+    have come from our own frontend process on this same machine, never
+    from an external caller, since nothing external can open a loopback
+    connection to us or reach this port at all. A direct (non-loopback)
+    caller still gets its own real source IP, exactly as before.
+    """
+    direct_ip = request.client.host if request.client else "unknown"
+    if direct_ip in _LOOPBACK_HOSTS:
+        forwarded = request.headers.get("x-client-identity")
+        if forwarded:
+            return forwarded.strip()[:_MAX_FORWARDED_IDENTITY_LEN]
+    return direct_ip
+
 
 def _log(db: Session, username: str, action: str, detail: str = ""):
     db.add(AuditLog(username=username, action=action, detail=detail))
@@ -52,7 +88,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _resolve_client_ip(request)
 
     # F-03: throttle is per (username, ip), not per username alone — see
     # core/login_throttle.py's docstring for why the old account-wide lock
