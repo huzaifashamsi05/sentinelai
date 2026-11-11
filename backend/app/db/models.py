@@ -41,6 +41,9 @@ class User(Base):
     username = Column(String(64), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.analyst)
+    # Superseded by the per-(username, IP) throttle in core/login_throttle.py
+    # (F-03: a per-username-only lock let anyone lock out the real admin).
+    # Columns kept, unused, rather than dropped, to avoid a schema migration.
     failed_login_attempts = Column(Integer, default=0)
     locked_until = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

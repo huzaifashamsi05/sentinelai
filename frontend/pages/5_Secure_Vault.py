@@ -376,7 +376,7 @@ with tab_encrypt:
         st.divider()
         st.subheader("🧪 Live Demo: integrity in action")
         st.caption(
-            "Verify it decrypts clean with zero re-upload, or flip a single byte and watch the same check catch it — "
+            "Verify it decrypts clean with zero re-upload, or flip a single byte and watch it get caught — "
             "exactly what happens if an attacker (or a corrupted transfer) modifies the file after encryption."
         )
         col_ok, col_tamper = st.columns(2)
@@ -389,12 +389,17 @@ with tab_encrypt:
             blob = bytearray(st.session_state["vault_demo_blob"])
             tampered_label = ""
             if tamper_clicked:
-                header_len = 32  # 16-byte salt + 16-byte IV, before the ciphertext starts
-                num_blocks = max(1, (len(blob) - header_len) // 16)
-                target_block = max(0, num_blocks - 3)
-                flip_offset = header_len + target_block * 16
-                blob[flip_offset] ^= 0x01
-                tampered_label = " (1 byte flipped)"
+                # Current vault format: version(1) + salt(16) + nonce(12) =
+                # 29-byte header, then AES-256-GCM ciphertext+tag. Unlike the
+                # old CBC format, GCM authenticates everything after the
+                # header as one unit, so flipping any single bit anywhere in
+                # the ciphertext/tag — not just inside a particular 16-byte
+                # block — is enough to make decryption fail outright.
+                header_len = 1 + 16 + 12
+                if len(blob) > header_len:
+                    flip_offset = header_len + (len(blob) - header_len) // 2
+                    blob[flip_offset] ^= 0x01
+                    tampered_label = " (1 byte flipped)"
             check_name = f'{r["filename"]}.enc'
             resp2 = requests.post(
                 f"{BACKEND_URL}/api/v1/vault/decrypt", headers=_headers(),
@@ -408,9 +413,8 @@ with tab_encrypt:
             if resp2.status_code == 200:
                 st.session_state["vault_verify_now_ui"] = {
                     "status": "ok",
-                    "message": f"Decrypted clean — integrity verified{tampered_label or ''}." if not tamper_clicked
-                               else "The tampered file still decrypted without error — click Simulate Tampering again.",
-                    "kind": "warning" if tamper_clicked else "success",
+                    "message": f"Decrypted clean — integrity verified{tampered_label or ''}.",
+                    "kind": "success",
                 }
                 st.session_state["vault_hero"] = {
                     "hasResult": True, "word": "VERIFIED", "color": "good",
@@ -421,7 +425,7 @@ with tab_encrypt:
             elif resp2.status_code == 409:
                 st.session_state["vault_verify_now_ui"] = {
                     "status": "tampered",
-                    "message": "🚨 TAMPERING DETECTED — SHA-256 integrity check failed. The file's content changed after it was encrypted.",
+                    "message": "🚨 MISMATCH DETECTED — the file decrypted fine, but its SHA-256 doesn't match the one recorded at encryption time.",
                     "kind": "error",
                 }
                 st.session_state["vault_hero"] = {
@@ -432,12 +436,12 @@ with tab_encrypt:
             elif resp2.status_code == 400:
                 st.session_state["vault_verify_now_ui"] = {
                     "status": "failed",
-                    "message": "🚨 TAMPERING DETECTED — the modified file failed to decrypt cleanly (corrupted padding/ciphertext).",
+                    "message": "🚨 TAMPERING DETECTED — AES-256-GCM's own authentication tag rejected the file; it never even reached a plaintext to hash.",
                     "kind": "error",
                 }
                 st.session_state["vault_hero"] = {
                     "hasResult": True, "word": "FAILED", "color": "bad",
-                    "filename": r["filename"], "size": r["size"], "extra": "Corrupted padding/ciphertext.",
+                    "filename": r["filename"], "size": r["size"], "extra": "Failed authentication — ciphertext was modified.",
                 }
                 _ledger_log("Tampering Simulated", check_name, "", "🚨")
             else:
@@ -457,10 +461,12 @@ with tab_encrypt:
             v = st.session_state["vault_verify_now_ui"]
             getattr(st, v["kind"])(v["message"])
             st.caption(
-                "Why this gets caught: AES-CBC by itself has no built-in authenticity check — it will happily "
-                "decrypt garbage. What actually catches the tampering is the SHA-256 of the original file, "
-                "captured the moment you encrypted it, compared against the hash of whatever comes out the "
-                "other side of decryption."
+                "Why this gets caught: AES-256-GCM is an authenticated cipher — it carries its own tag over the "
+                "whole ciphertext, so a single flipped bit anywhere makes decryption fail outright, before any "
+                "plaintext ever comes out. The SHA-256 recorded at encryption time still matters as a second, "
+                "independent check (e.g. if someone swapped in an entirely different file that still decrypts "
+                "cleanly with the right password) — but it's no longer the ONLY thing standing between you and "
+                "silently-corrupted output, the way it was under the older AES-CBC format."
             )
 
 with tab_decrypt:
@@ -554,11 +560,21 @@ with tab_hash:
 
 with tab_keys:
     st.subheader("Generate an RSA-2048 keypair")
-    key_password = st.text_input("Optional passphrase to protect the private key", type="password", key="keygen_pw")
+    key_password = st.text_input(
+        "Passphrase to protect the private key (min 8 chars, required)",
+        type="password", key="keygen_pw",
+    )
+    st.caption(
+        "Required — the server returns your private key once, so it's always encrypted "
+        "(never sent back as plain, unencrypted PEM)."
+    )
     if st.button("🔑 Generate Keypair"):
+        if len(key_password) < 8:
+            st.error("Passphrase must be at least 8 characters.")
+            st.stop()
         resp = requests.post(
             f"{BACKEND_URL}/api/v1/vault/keypair/generate", headers=_headers(),
-            data={"password": key_password} if key_password else {}, timeout=30,
+            data={"password": key_password}, timeout=30,
         )
         if resp.status_code == 200:
             result = resp.json()

@@ -41,7 +41,7 @@ async def encrypt_file(
         is_malicious=False,
         confidence=1.0,
         explanation=[{"feature": "sha256_at_encryption_time", "value": integrity_hash, "impact": 0}],
-        detail="AES-256-CBC, key derived via PBKDF2-HMAC-SHA256 (200k iterations)",
+        detail="AES-256-GCM, key derived via PBKDF2-HMAC-SHA256 (600k iterations)",
         source_ref=file.filename,
     )
 
@@ -106,9 +106,20 @@ async def hash_file(file: UploadFile = File(...), user=Depends(get_current_user)
 
 
 @router.post("/keypair/generate")
-def generate_keypair(password: str | None = Form(default=None), user=Depends(get_current_user)):
+def generate_keypair(password: str = Form(..., min_length=8), user=Depends(get_current_user)):
     """Generates an RSA-2048 keypair for digital signatures. Private key is
-    returned once — the server does not store it."""
+    returned once — the server does not store it.
+
+    F-06: the passphrase used to be optional, so an unencrypted private key
+    could come straight back in the HTTP response body — meaning the
+    server (and anything that can see its traffic or logs: a reverse
+    proxy, access logs, browser history) saw every user's raw signing key.
+    Requiring it means the response always carries an encrypted PEM
+    (BestAvailableEncryption) instead. True client-side generation, where
+    the server never sees the private key at all, would be the ideal fix
+    but needs a WebCrypto-based frontend; this is the practical mitigation
+    within the current Streamlit-form architecture.
+    """
     private_key, public_key = cu.generate_rsa_keypair()
     return {
         "private_key_pem": cu.rsa_private_to_pem(private_key, password).decode(),

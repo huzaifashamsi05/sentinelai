@@ -10,40 +10,53 @@ import hashlib
 import os
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import padding as sym_padding
 from cryptography.hazmat.primitives.asymmetric import rsa, padding as asym_padding
 from cryptography.hazmat.primitives import hashes, serialization
 
 AES_KEY_SIZE = 32  # AES-256
-IV_SIZE = 16
+IV_SIZE = 16  # legacy CBC format only
+GCM_NONCE_SIZE = 12
+
+# F-05/F-11: the vault's file format now starts with a version byte.
+#   0x02 (current) -> salt(16) || nonce(12) || AES-256-GCM ciphertext+tag
+#   anything else  -> legacy salt(16) || iv(16) || AES-256-CBC ciphertext
+# GCM is an AEAD cipher: it authenticates the ciphertext, so flipping any
+# bit anywhere in the blob makes decryption fail outright (InvalidTag)
+# instead of silently returning corrupted plaintext — see F-05 below.
+# Legacy CBC decryption is kept ONLY so files encrypted before this fix
+# still open; new encryptions never use it.
+FORMAT_VERSION_GCM = 0x02
+PBKDF2_ITERATIONS = 600_000          # OWASP Password Storage Cheat Sheet current guidance
+PBKDF2_ITERATIONS_LEGACY = 200_000   # what files encrypted before this fix actually used
 
 
 # ---------------- AES (confidentiality) ----------------
-def derive_key_from_password(password: str, salt: bytes) -> bytes:
+def derive_key_from_password(password: str, salt: bytes, iterations: int = PBKDF2_ITERATIONS) -> bytes:
     """PBKDF2-HMAC-SHA256 — turns a user password into a proper AES key."""
-    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200_000, dklen=AES_KEY_SIZE)
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations, dklen=AES_KEY_SIZE)
 
 
 def aes_encrypt(plaintext: bytes, password: str) -> bytes:
-    """Returns salt(16) || iv(16) || ciphertext. Self-contained blob,
-    so decrypting only needs the password."""
+    """Returns version(1) || salt(16) || nonce(12) || AES-256-GCM ciphertext+tag.
+    Self-contained blob, so decrypting only needs the password."""
     salt = os.urandom(16)
     key = derive_key_from_password(password, salt)
-    iv = os.urandom(IV_SIZE)
+    nonce = os.urandom(GCM_NONCE_SIZE)
 
-    padder = sym_padding.PKCS7(algorithms.AES.block_size).padder()
-    padded = padder.update(plaintext) + padder.finalize()
-
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(padded) + encryptor.finalize()
-
-    return salt + iv + ciphertext
+    ciphertext = AESGCM(key).encrypt(nonce, plaintext, None)
+    return bytes([FORMAT_VERSION_GCM]) + salt + nonce + ciphertext
 
 
-def aes_decrypt(blob: bytes, password: str) -> bytes:
+def _aes_decrypt_legacy_cbc(blob: bytes, password: str) -> bytes:
+    """Decrypts the OLD (pre-fix) format: salt(16) || iv(16) || ciphertext,
+    AES-256-CBC, PBKDF2 at the old 200k iterations. Kept only so files
+    encrypted before this fix still open — never used for new encryptions.
+    Unauthenticated by construction: this is exactly the weakness F-05
+    fixes, which is why it isn't how new files get written any more."""
     salt, iv, ciphertext = blob[:16], blob[16:32], blob[32:]
-    key = derive_key_from_password(password, salt)
+    key = derive_key_from_password(password, salt, iterations=PBKDF2_ITERATIONS_LEGACY)
 
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
     decryptor = cipher.decryptor()
@@ -51,6 +64,22 @@ def aes_decrypt(blob: bytes, password: str) -> bytes:
 
     unpadder = sym_padding.PKCS7(algorithms.AES.block_size).unpadder()
     return unpadder.update(padded) + unpadder.finalize()
+
+
+def aes_decrypt(blob: bytes, password: str) -> bytes:
+    if blob and blob[0] == FORMAT_VERSION_GCM:
+        salt = blob[1:17]
+        nonce = blob[17:17 + GCM_NONCE_SIZE]
+        ciphertext = blob[17 + GCM_NONCE_SIZE:]
+        key = derive_key_from_password(password, salt)
+        # Raises cryptography.exceptions.InvalidTag on a wrong password OR
+        # on ANY tampering — the router's existing `except Exception` turns
+        # either into the same "Decryption failed" 400, which is exactly
+        # what should happen: GCM makes those two cases indistinguishable
+        # from the outside, by design.
+        return AESGCM(key).decrypt(nonce, ciphertext, None)
+    # No recognised version marker -> a file encrypted before this fix.
+    return _aes_decrypt_legacy_cbc(blob, password)
 
 
 # ---------------- SHA-256 (integrity) ----------------

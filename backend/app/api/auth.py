@@ -3,23 +3,15 @@ Authentication: register, login, current-user info.
 
 Implements the controls the handbook explicitly asks for on auth-adjacent
 projects (Group D/E): bcrypt password hashing, role-based access
-(Admin/Analyst), account lockout after repeated failed logins, and an
-audit log of login events.
+(Admin/Analyst), per-(username, IP) login throttling (core/login_throttle.py),
+and an audit log of login events.
 """
-from datetime import datetime, timedelta, timezone
-
-
-def utcnow() -> datetime:
-    """SQLite drops tzinfo on round-trip, so a timestamp read back from the
-    DB is naive while datetime.now(timezone.utc) is aware — comparing them
-    raises TypeError. Keep every stored/compared timestamp naive UTC."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core import login_throttle
 from app.core.security import hash_password, verify_password, create_access_token
 from app.db.database import get_db
 from app.db.models import User, UserRole, AuditLog
@@ -27,8 +19,10 @@ from app.schemas import UserCreate, UserOut, Token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-MAX_FAILED_ATTEMPTS = 3
-LOCKOUT_MINUTES = 5
+# A fixed, constant-looking hash that doesn't correspond to anyone's real
+# password. Used so login() always runs a bcrypt check even when the
+# username doesn't exist — see the F-04 comment on login() below for why.
+_DUMMY_HASH = hash_password("this-is-not-a-real-password-used-only-for-constant-time-login")
 
 
 def _log(db: Session, username: str, action: str, detail: str = ""):
@@ -57,31 +51,35 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == form_data.username).first()
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    client_ip = request.client.host if request.client else "unknown"
 
-    if user and user.locked_until and user.locked_until > utcnow():
-        remaining = int((user.locked_until - utcnow()).total_seconds())
-        _log(db, form_data.username, "login_blocked_locked", f"{remaining}s remaining")
+    # F-03: throttle is per (username, ip), not per username alone — see
+    # core/login_throttle.py's docstring for why the old account-wide lock
+    # was a denial-of-service against the admin account.
+    remaining = login_throttle.seconds_locked(form_data.username, client_ip)
+    if remaining > 0:
+        _log(db, form_data.username, "login_blocked_throttled", f"{remaining}s remaining, ip={client_ip}")
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
-            detail=f"Account locked. Try again in {remaining} seconds.",
+            detail=f"Too many failed attempts from this IP. Try again in {remaining} seconds.",
         )
 
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        if user:
-            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
-            if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
-                user.locked_until = utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
-                _log(db, form_data.username, "account_locked", f"after {user.failed_login_attempts} failed attempts")
-            db.commit()
-        _log(db, form_data.username, "login_failed")
+    user = db.query(User).filter(User.username == form_data.username).first()
+
+    # F-04: ALWAYS run a bcrypt check — against the real hash if the user
+    # exists, against a fixed dummy hash if not — instead of short-circuiting
+    # on "user is None". Skipping bcrypt entirely for unknown usernames made
+    # an existing-user login ~45x slower than an unknown-user one (317ms vs
+    # 7ms), which is enough of a timing gap to enumerate valid usernames.
+    password_ok = verify_password(form_data.password, user.hashed_password if user else _DUMMY_HASH)
+
+    if not user or not password_ok:
+        login_throttle.record_failure(form_data.username, client_ip)
+        _log(db, form_data.username, "login_failed", f"ip={client_ip}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
 
-    # success — reset lockout counters
-    user.failed_login_attempts = 0
-    user.locked_until = None
-    db.commit()
+    login_throttle.record_success(form_data.username, client_ip)
     _log(db, user.username, "login_success")
 
     token = create_access_token(subject=user.username, role=user.role.value)

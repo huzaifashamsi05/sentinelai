@@ -45,6 +45,8 @@ DVWA).
 
 ## Running locally
 
+Requires **Python 3.12** (SHAP 0.46.0 has no published wheel for 3.13 yet).
+
 ```bash
 pip install -r requirements.txt --break-system-packages
 
@@ -55,16 +57,26 @@ cd backend && PYTHONPATH=. uvicorn app.main:app --reload --port 8000
 cd frontend && streamlit run Home.py
 ```
 
+The backend refuses to start without a `SECRET_KEY` (the JWT signing key)
+set in the environment — it used to fall back to a value published right
+here in the README, which meant anyone could forge an admin token offline.
+Set it before running either terminal above:
+
+```bash
+export SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(64))')"
+```
+
 Open http://localhost:8501. Two accounts are seeded automatically on
 first backend startup (see `backend/app/main.py::seed_default_users`):
 
 | Username | Password | Role |
 |---|---|---|
-| `admin` | `SentinelAI123` | admin |
-| `analyst1` | `AnalystPass123` | analyst |
+| `admin` | from the `ADMIN_PASSWORD` env var — if unset, a random password is generated and printed to the backend's console log on startup | admin |
+| `analyst1` | `AnalystPass123` (fixed, intentionally public — this account can't do anything admin-only) | analyst |
 
-Change these before showing this to anyone outside the team, or just
-register your own account from the login screen.
+Set `ADMIN_PASSWORD` for a stable admin login across restarts, or just
+register your own account from the login screen (self-registration always
+creates an Analyst account; Admin only ever comes from this seed step).
 
 ## Retraining a model
 
