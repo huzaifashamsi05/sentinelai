@@ -15,11 +15,11 @@ industry practice for building security tooling.
 - **It never creates, hosts, or executes real malware.** The Malware
   Detection module is trained on a public, academic dataset of
   *static features already extracted* from malicious and benign files
-  (EMBER-style). No malicious binary is ever downloaded, stored, or run
-  by this project.
+  (ClaMP — Classification of Malware with PE headers). No malicious
+  binary is ever downloaded, stored, or run by this project.
 - **It never uses real victims' data.** All training data is public,
-  synthetic, or benchmark academic datasets (NSL-KDD/CICIDS for
-  network traffic, public phishing-URL datasets, EMBER for malware
+  synthetic, or benchmark academic datasets (NSL-KDD for network
+  traffic, a public phishing-URL dataset, ClaMP for malware
   features) — never scraped from real people or organizations without
   consent.
 
@@ -41,3 +41,14 @@ security tool, academic or professional.
 
 Both are deliberately vulnerable applications built for security
 education and are safe, legal targets for this kind of scanning.
+
+## Known scope limitations (by design, not oversight)
+
+- **The alert feed and admin-only toggles (security headers, live
+  monitor on/off) are global, not per-user.** Every logged-in user reads
+  the same shared alert table and sees the same toggle state. This is
+  intentional for a single-tenant classroom demo — the whole point of
+  the "unified dashboard" is one shared view of everything happening
+  across the five modules — but it is not how a multi-tenant SOC product
+  would be built. A real multi-organization deployment would need
+  per-user/per-org scoping on both the alert feed and these toggles.

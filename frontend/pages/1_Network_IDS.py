@@ -47,7 +47,7 @@ _BIN_LABELS = {"normal": "Normal", "dos": "DoS", "probe": "Probe", "r2l": "R2L",
 _LABEL_WORD = {"normal": "normal", "dos": "DoS", "probe": "probe", "r2l": "R2L", "u2r": "U2R"}
 
 
-def _render_shap_chart(explanation: list[dict], height: int = 220) -> None:
+def _render_shap_chart(explanation: list[dict], key: str, height: int = 220) -> None:
     exp_df = pd.DataFrame(explanation)
     exp_df["direction"] = exp_df["impact"].apply(lambda x: "Pushes toward attack" if x > 0 else "Pushes toward normal")
     fig = px.bar(
@@ -59,7 +59,14 @@ def _render_shap_chart(explanation: list[dict], height: int = 220) -> None:
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#F4EFE3"},
         legend_title_text="",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    # F-07: two flagged live-feed entries can carry identical SHAP
+    # explanations (same feature impacts), and Streamlit auto-generates a
+    # plotly_chart element's ID partly from its content — so two identical
+    # charts in one run collided on the same ID and crashed the page with
+    # StreamlitDuplicateElementId. `key` must be unique per entry, not per
+    # chart content, so the caller passes something that actually varies
+    # per request (e.g. the live-feed entry's own id).
+    st.plotly_chart(fig, use_container_width=True, key=key)
 
 
 _CONSOLE_TEMPLATE = r"""
@@ -413,7 +420,7 @@ for item in flagged:
         f"({item['status_code']}) at {datetime.fromtimestamp(item['ts']).strftime('%H:%M:%S')} "
         f"— confidence {item['confidence']:.0%}"
     ):
-        _render_shap_chart(item["explanation"])
+        _render_shap_chart(item["explanation"], key=f"shap_live_{item['id']}")
         st.caption("Feature row computed for this request (pre-encoding):")
         st.json(item["feature_row"], expanded=False)
 

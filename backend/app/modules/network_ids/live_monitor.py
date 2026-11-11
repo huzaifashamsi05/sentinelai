@@ -38,11 +38,6 @@ disclosure.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-import joblib
-
-from app.core.config import settings
 from app.modules.ml_common import load_bundle, predict_with_explanation
 
 MODULE_KEY = "network_ids"
@@ -50,17 +45,12 @@ _LOGIN_PATH_HINT = "/auth/login"
 _TIME_WINDOW_SECONDS = 2.0   # NSL-KDD's own window for count/srv_count
 _HOST_WINDOW_SIZE = 100      # NSL-KDD's own window for dst_host_*
 
-_encoder_cache: dict[str, dict] = {}
 
-
-def _get_encoders() -> dict:
-    """Cached separately from ml_common's LoadedModel (which doesn't carry
-    the raw categorical encoders) so a feed of N entries doesn't re-read
-    the joblib file off disk N times per poll."""
-    if MODULE_KEY not in _encoder_cache:
-        raw_bundle = joblib.load(Path(settings.MODELS_DIR) / f"{MODULE_KEY}.joblib")
-        _encoder_cache[MODULE_KEY] = raw_bundle["categorical_encoders"]
-    return _encoder_cache[MODULE_KEY]
+def _get_encoders(bundle) -> dict:
+    """ml_common.load_bundle() already caches the whole joblib bundle
+    process-wide (F-13) — this just reaches into the part of it this
+    module needs, rather than keeping a second, separate disk-backed cache."""
+    return bundle.extra["categorical_encoders"]
 
 
 def _flag_for_status(status_code: int) -> str:
@@ -140,7 +130,7 @@ def classify_entry(entry, all_entries: list) -> dict | None:
         return None
 
     feature_row = compute_feature_row(entry, all_entries)
-    encoders = _get_encoders()
+    encoders = _get_encoders(bundle)
 
     def encode(field: str, value: str) -> int:
         classes = encoders[field]

@@ -16,12 +16,21 @@ import pandas as pd
 from app.core.config import settings
 
 
+_STANDARD_KEYS = {"model", "feature_names", "label_names", "explainer"}
+
+
 @dataclass
 class LoadedModel:
     model: Any
     feature_names: list[str]
     label_names: list[str]
     explainer: Any  # shap.TreeExplainer
+    # Anything the joblib bundle carries beyond the 4 standard keys above
+    # (e.g. network_ids' "categorical_encoders") — exposed here so callers
+    # never need a second, separate joblib.load() of the same file just to
+    # reach one extra field (see F-13: /predict used to reload the whole
+    # 22 MB bundle from disk on every single request for exactly this reason).
+    extra: dict = None  # type: ignore[assignment]
 
 
 _cache: dict[str, LoadedModel] = {}
@@ -44,6 +53,7 @@ def load_bundle(module_key: str) -> LoadedModel | None:
         feature_names=bundle["feature_names"],
         label_names=bundle["label_names"],
         explainer=bundle["explainer"],
+        extra={k: v for k, v in bundle.items() if k not in _STANDARD_KEYS},
     )
     _cache[module_key] = loaded
     return loaded

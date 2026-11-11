@@ -19,6 +19,15 @@ router = APIRouter(prefix="/network-ids", tags=["network-ids"])
 
 MODULE_KEY = "network_ids"
 
+# F-08: the live feed used to raise an alert for ANY non-"normal" label,
+# including the app's own ordinary traffic landing as "probe" at ~60%
+# confidence (see docs panel on the page — NSL-KDD's "probe" class is
+# structurally what a small JSON API call looks like). Only surface it as
+# an alert in the unified feed above this confidence; it's still shown,
+# labeled, in the live list below regardless of confidence — this only
+# trims what gets escalated into the alert table.
+LIVE_MONITOR_ALERT_CONFIDENCE_THRESHOLD = 0.85
+
 
 class LiveMonitorToggle(BaseModel):
     enabled: bool
@@ -106,12 +115,10 @@ def predict(record: ConnectionRecord, db: Session = Depends(get_db), user=Depend
     if bundle is None:
         raise HTTPException(status_code=503, detail="Model not trained yet — run ml/network_ids/train.py")
 
-    import joblib
-    from pathlib import Path
-    from app.core.config import settings
-
-    raw_bundle = joblib.load(Path(settings.MODELS_DIR) / f"{MODULE_KEY}.joblib")
-    encoders = raw_bundle["categorical_encoders"]
+    # F-13: this used to joblib.load() the 22 MB model file fresh on every
+    # single call just to reach "categorical_encoders" — load_bundle()
+    # already has it cached in .extra, same as the model/explainer.
+    encoders = bundle.extra["categorical_encoders"]
 
     def encode(field: str, value: str) -> int:
         classes = encoders[field]
@@ -166,7 +173,11 @@ def live_feed(limit: int = 20, db: Session = Depends(get_db), user=Depends(get_c
         if entry.classification is None:
             result = classify_entry(entry, entries)
             entry.classification = result
-            if result is not None and result["label"] != "normal":
+            if (
+                result is not None
+                and result["label"] != "normal"
+                and result["confidence"] >= LIVE_MONITOR_ALERT_CONFIDENCE_THRESHOLD
+            ):
                 record_alert(
                     db,
                     module=ModuleName.network_ids,
