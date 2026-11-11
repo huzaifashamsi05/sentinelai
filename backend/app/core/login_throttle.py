@@ -19,6 +19,27 @@ fundamentally request-rate state, not a durable record.
 Not implemented: CAPTCHA after N failures (the audit's other suggestion).
 Left for future work — it needs a third-party CAPTCHA service and a
 frontend flow, more than this fix's scope.
+
+---
+
+Second follow-up, after the per-(username, ip) throttle itself started
+actually differentiating visitors (see auth.py's _resolve_client_ip): an
+attacker who can cheaply get a FRESH identity for every attempt (a new
+browser session — the fallback identity when no real forwarded IP is
+available — is free to regenerate just by dropping session state) pays
+no cost at all from the per-identity bucket, since each attempt lands in
+its own brand-new, never-before-seen bucket.
+
+GLOBAL_* below adds a second, identity-INDEPENDENT limiter per username,
+counting failures across every identity combined. Deliberately NOT
+exponential and capped very low (30s, see GLOBAL_LOCK_SECONDS) — an
+unbounded or escalating account-wide lock is exactly the F-03 problem
+this module was written to kill in the first place. This one only ever
+adds a short, fixed pause, and only after a fairly high failure count
+(15 in 15 minutes) that a real user mistyping their password would be
+very unlikely to hit, so it meaningfully raises the cost of distributed
+guessing without reintroducing a serious denial-of-service lever against
+any one account.
 """
 from __future__ import annotations
 
@@ -29,6 +50,10 @@ MAX_ATTEMPTS_BEFORE_BACKOFF = 3
 BASE_BACKOFF_SECONDS = 5
 MAX_BACKOFF_SECONDS = 300  # 5-minute cap — same ceiling the old lockout used
 
+GLOBAL_MAX_FAILURES_PER_USERNAME = 15
+GLOBAL_WINDOW_SECONDS = 15 * 60
+GLOBAL_LOCK_SECONDS = 30  # short and FIXED on purpose — see module docstring
+
 
 @dataclass
 class _Bucket:
@@ -36,7 +61,15 @@ class _Bucket:
     locked_until: float = 0.0
 
 
+@dataclass
+class _UsernameBucket:
+    window_start: float = 0.0
+    failures_in_window: int = 0
+    locked_until: float = 0.0
+
+
 _buckets: dict[tuple[str, str], _Bucket] = {}
+_username_buckets: dict[str, _UsernameBucket] = {}
 
 
 def _key(username: str, ip: str) -> tuple[str, str]:
@@ -64,3 +97,28 @@ def record_failure(username: str, ip: str) -> None:
 
 def record_success(username: str, ip: str) -> None:
     _buckets.pop(_key(username, ip), None)
+
+
+def seconds_locked_global(username: str) -> int:
+    """0 unless this username has hit GLOBAL_MAX_FAILURES_PER_USERNAME
+    failures (summed across every identity) within the current window,
+    else the whole seconds remaining on that short, fixed pause."""
+    bucket = _username_buckets.get(username)
+    if not bucket or bucket.locked_until <= time.monotonic():
+        return 0
+    return int(bucket.locked_until - time.monotonic()) + 1
+
+
+def record_failure_global(username: str) -> None:
+    now = time.monotonic()
+    bucket = _username_buckets.setdefault(username, _UsernameBucket())
+    if now - bucket.window_start > GLOBAL_WINDOW_SECONDS:
+        bucket.window_start = now
+        bucket.failures_in_window = 0
+    bucket.failures_in_window += 1
+    if bucket.failures_in_window >= GLOBAL_MAX_FAILURES_PER_USERNAME:
+        bucket.locked_until = now + GLOBAL_LOCK_SECONDS
+
+
+def record_success_global(username: str) -> None:
+    _username_buckets.pop(username, None)

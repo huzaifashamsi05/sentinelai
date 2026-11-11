@@ -45,7 +45,19 @@ def _visitor_identity_header() -> dict:
         headers = st.context.headers
         xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
         if xff:
-            real_ip = xff.split(",")[0].strip()
+            # The LAST entry, not the first: a conforming proxy chain
+            # APPENDS the address it actually saw a connection from, it
+            # never overwrites what's already there. So the first entry
+            # is whatever the original request claimed — which, for a
+            # raw HTTP request Streamlit's edge received (not
+            # necessarily from a real browser), is attacker-controlled
+            # and trivially spoofable: anyone could visit with their own
+            # X-Forwarded-For: 1.2.3.4 already set and get a fresh
+            # "identity" on every attempt, defeating this throttle
+            # entirely. The last entry is the one Streamlit's OWN front
+            # door appended from the real TCP connection, which a client
+            # cannot forge.
+            real_ip = xff.split(",")[-1].strip()
             if real_ip:
                 return {"X-Client-Identity": real_ip}
     except Exception:

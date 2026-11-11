@@ -101,6 +101,22 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
             detail=f"Too many failed attempts from this IP. Try again in {remaining} seconds.",
         )
 
+    # Follow-up to F-03: the per-identity throttle above is free for an
+    # attacker to dodge by getting a fresh identity (a new browser
+    # session) on every attempt. This second, identity-INDEPENDENT check
+    # counts failures per username across ALL identities combined, so
+    # that path isn't free either — see login_throttle.py's docstring for
+    # why it's capped at a short, fixed 30s rather than an escalating
+    # lock (an account-wide lock with no cap is exactly the thing F-03
+    # fixed in the first place).
+    global_remaining = login_throttle.seconds_locked_global(form_data.username)
+    if global_remaining > 0:
+        _log(db, form_data.username, "login_blocked_throttled_global", f"{global_remaining}s remaining")
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail=f"Too many failed attempts for this account. Try again in {global_remaining} seconds.",
+        )
+
     user = db.query(User).filter(User.username == form_data.username).first()
 
     # F-04: ALWAYS run a bcrypt check — against the real hash if the user
@@ -112,10 +128,12 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
 
     if not user or not password_ok:
         login_throttle.record_failure(form_data.username, client_ip)
+        login_throttle.record_failure_global(form_data.username)
         _log(db, form_data.username, "login_failed", f"ip={client_ip}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
 
     login_throttle.record_success(form_data.username, client_ip)
+    login_throttle.record_success_global(form_data.username)
     _log(db, user.username, "login_success")
 
     token = create_access_token(subject=user.username, role=user.role.value)
